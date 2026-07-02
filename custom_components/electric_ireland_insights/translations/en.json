@@ -22,13 +22,13 @@
       },
       "options": {
         "title": "Import Options",
-        "description": "The integration will import the last 30 days of data during setup. You can also import all available historical data (typically 6–13 months) as a background task.",
+        "description": "Full historical import is enabled by default. It fetches all available data from your bill periods (typically 6–13 months) as a background task. This involves many sequential requests to the Electric Ireland portal and may take 10–30 minutes. Uncheck if you only want the last 30 days.",
         "data": {
-          "import_full_history": "Import full history",
+          "import_full_history": "Import full history (default: on)",
           "discount_percentage": "Discount percentage (%)"
         },
         "data_description": {
-          "import_full_history": "Fetch all available historical data from your bill periods. This runs in the background and may take 10–30 minutes. You can also trigger this later via Reconfigure.",
+          "import_full_history": "Fetch all available historical data from your bill periods. Default is ON. This runs in the background, issues many sequential requests to the Electric Ireland portal, and may take 10–30 minutes. There is a small rate-limit risk during this one-time import. Uncheck to import only the last 30 days now; you can trigger full history later via Reconfigure.",
           "discount_percentage": "Enter your discount percentage (e.g., 20 for 20% Saver discount). A separate '_cost_discounted' statistic will be created with the discount applied. Standing charges are not included."
         }
       },

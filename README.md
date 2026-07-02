@@ -35,8 +35,11 @@ navigate to the Insights page for the configured account, and then call the Mete
 
 As this data is also fed from ESB ([Electrical Supply Board](https://esb.ie)), it is not in real time. They publish
 data with 1-3 days delay; the integration polls **every 3 hours** and ingests any newly available data. On first
-install, it fetches up to 30 days of history; subsequent polls look back 4 days to pick up newly published readings.
-Full historical data (typically 6–13 months) can be imported on demand via the **Import full history** option during setup or reconfiguration.
+install, the default behavior is to import **all available historical data** (typically 6–13 months) as a background
+task; this involves many sequential requests to the Electric Ireland portal and may take **10–30 minutes**. If you
+prefer a faster first setup, uncheck **Import full history** during setup to import only the last 30 days. Subsequent
+polls look back 4 days to pick up newly published readings. Full historical data can also be imported later via
+**Reconfigure**.
 
 ### How does the discount percentage work?
 
@@ -115,9 +118,9 @@ These appear in **Settings → Devices & services** under the integration's devi
 Every 3 hours:
 
 * Performs the login flow mentioned above to establish a session.
-* On **first install**: fetches up to 30 days of historical data.
+* On **first install**: by default, imports all available historical data (typically 6–13 months) as a background task. This uses many sequential portal requests and may take 10–30 minutes. Uncheck **Import full history** during setup to import only the last 30 days.
 * On **subsequent runs**: fetches the last 4 days to pick up any newly published meter readings.
-* **Full history (opt-in)**: during setup or via **Reconfigure → Import full history**, the user can trigger a background task that fetches all available bill period data (typically 6–13 months). This runs without blocking Home Assistant and typically takes 10–30 minutes.
+* **Full history**: during setup or via **Reconfigure → Import full history**, the user can trigger or re-trigger a background task that fetches all available bill period data. This runs without blocking Home Assistant and typically takes 10–30 minutes.
 * Requests are made **sequentially** (one day at a time) to avoid rate limiting.
 * Both consumption and cost are returned in the same response, with 24 hourly datapoints per day.
 * Data is timestamped at the end of each hourly interval (e.g., `00:59:59` for the midnight hour) and normalized to the hour start for statistics alignment.

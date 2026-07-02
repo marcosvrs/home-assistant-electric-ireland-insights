@@ -52,7 +52,9 @@ A final **Import Options** step is shown before setup completes:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| **Import full history** | Checked | Fetch all available historical data from your bill periods (typically 6–13 months) as a background task. Uncheck if you only want the last 30 days. This can also be triggered later via Reconfigure. |
+| **Import full history** | **Checked (on)** | Fetch all available historical data from your bill periods (typically 6–13 months) as a background task. Because Electric Ireland does not publish an official API, this is done via many sequential web-portal requests and may take **10–30 minutes** for the initial import. There is a small rate-limit risk during this one-time background work. Uncheck this option if you only want the last 30 days imported now; you can still trigger a full import later via **Reconfigure**. |
+
+> **Why is full history on by default?** The Energy Dashboard is most useful with complete historical context. The import runs in the background and does not block Home Assistant. If you are concerned about rate limiting or want a faster first setup, uncheck this option.
 
 ### Adding to the Energy Dashboard
 
