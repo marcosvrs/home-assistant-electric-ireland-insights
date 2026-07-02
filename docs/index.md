@@ -102,26 +102,27 @@ The integration imports data as **external statistics** directly into the HA rec
 
 ### Per-tariff breakdown
 
-For smart meter accounts on a time-of-use tariff, the integration automatically detects which tariff buckets are active and imports separate statistics for each:
+When the current data window contains time-of-use tariff buckets, the integration automatically detects which buckets are active and imports separate statistics for each:
 
 | Statistic ID | Description | Unit |
 |---|---|---|
 | `electric_ireland_insights:{account}_consumption_off_peak` | Off-peak consumption | kWh |
 | `electric_ireland_insights:{account}_consumption_mid_peak` | Mid-peak consumption | kWh |
 | `electric_ireland_insights:{account}_consumption_on_peak` | On-peak consumption | kWh |
-| `electric_ireland_insights:{account}_consumption_flat_rate` | Flat-rate consumption during tariff transition periods | kWh |
+| `electric_ireland_insights:{account}_consumption_flat_rate` | Flat-rate consumption from hours tagged as flat rate within a smart tariff plan | kWh |
 | `electric_ireland_insights:{account}_cost_off_peak` | Off-peak cost (gross) | EUR |
 | `electric_ireland_insights:{account}_cost_mid_peak` | Mid-peak cost (gross) | EUR |
 | `electric_ireland_insights:{account}_cost_on_peak` | On-peak cost (gross) | EUR |
-| `electric_ireland_insights:{account}_cost_flat_rate` | Flat-rate cost during tariff transition periods (gross) | EUR |
+| `electric_ireland_insights:{account}_cost_flat_rate` | Flat-rate cost from hours tagged as flat rate within a smart tariff plan (gross) | EUR |
 | `electric_ireland_insights:{account}_cost_off_peak_discounted` | Off-peak cost with discount applied (only created when discount > 0) | EUR |
 | `electric_ireland_insights:{account}_cost_mid_peak_discounted` | Mid-peak cost with discount applied (only created when discount > 0) | EUR |
 | `electric_ireland_insights:{account}_cost_on_peak_discounted` | On-peak cost with discount applied (only created when discount > 0) | EUR |
 | `electric_ireland_insights:{account}_cost_flat_rate_discounted` | Flat-rate cost with discount applied (only created when discount > 0) | EUR |
 
-- If you're on a **flat-rate** tariff (single bucket), per-tariff statistics are not created (they would be identical to the totals).
-- If only one non-flat bucket appears (e.g., off-peak only), per-tariff statistics are still created.
-- Accounts with smart tariff history that temporarily switch to flat rate during a contract change will also show `_flat_rate` statistics for that transition period.
+- Per-tariff statistics are created **only when the current data window contains at least one non-flat bucket** (off-peak, mid-peak, or on-peak). The integration evaluates this on every poll — it does not permanently label an account as "smart" or "flat rate".
+- If you're on a **flat-rate** tariff (only `flat_rate` buckets appear in the current window), per-tariff statistics are not created (they would be identical to the totals).
+- If only one non-flat bucket appears in the current window (e.g., off-peak only), per-tariff statistics are still created.
+- The `_flat_rate` bucket appears only when a smart-tariff account has hours tagged as flat rate in the same window as non-flat buckets. If an account temporarily switches entirely to flat rate and no non-flat buckets are present in the current window, only the aggregate statistics are created.
 - Per-tariff statistics may not appear immediately after setup — they are populated during the background backfill and on subsequent poll updates.
 
 ### Setting up the Energy Dashboard with per-tariff breakdown
