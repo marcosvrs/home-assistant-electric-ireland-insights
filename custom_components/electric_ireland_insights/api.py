@@ -15,6 +15,15 @@ _LOGGER = logging.getLogger(__name__)
 BASE_URL = "https://youraccountonline.electricireland.ie"
 
 
+def _redact_id(value: str | None, visible: int = 4) -> str:
+    """Return a redacted identifier for safe logging."""
+    if not value:
+        return "<empty>"
+    if len(value) <= visible:
+        return "*" * len(value)
+    return f"{'*' * (len(value) - visible)}{value[-visible:]}"
+
+
 class ElectricIrelandAPI:
     def __init__(self, username: str, password: str, account_number: str | None = None) -> None:
         self._username = username
@@ -217,12 +226,18 @@ class ElectricIrelandAPI:
                     continue
                 account_number = account_number_el.text.strip()
                 if account_number != self._account_number:
-                    _LOGGER.debug("Skipping account %s as it is not target", account_number)
+                    _LOGGER.debug(
+                        "Skipping account %s as it is not target",
+                        _redact_id(account_number),
+                    )
                     continue
 
                 is_elec_divs = account_div.find_all("h2", {"class": "account-electricity-icon"})
                 if len(is_elec_divs) != 1:
-                    _LOGGER.info("Found account %s but is not Electricity", account_number)
+                    _LOGGER.info(
+                        "Found account %s but it is not an electricity account",
+                        _redact_id(account_number),
+                    )
                     continue
 
                 target_account = account_div
@@ -256,11 +271,11 @@ class ElectricIrelandAPI:
             if cached_meter_ids is not None:
                 _LOGGER.debug(
                     "Using cached meter IDs: partner=%s, contract=%s, premise=%s",
-                    cached_meter_ids.get("partner"),
-                    cached_meter_ids.get("contract"),
-                    cached_meter_ids.get("premise"),
+                    _redact_id(cached_meter_ids.get("partner")),
+                    _redact_id(cached_meter_ids.get("contract")),
+                    _redact_id(cached_meter_ids.get("premise")),
                 )
-                _LOGGER.debug("Login successful (cached IDs)")
+                _LOGGER.info("Login successful (cached meter IDs)")
                 return MeterInsightClient(session, cached_meter_ids)
 
             soup3 = BeautifulSoup(html3, "html.parser")
@@ -282,13 +297,13 @@ class ElectricIrelandAPI:
             if not isinstance(partner, str) or not isinstance(contract, str) or not isinstance(premise, str):
                 raise InvalidAuth("Login succeeded but insights page not accessible")
 
-            _LOGGER.info(
-                "Found meter IDs: partner=%s, contract=%s, premise=%s",
-                partner,
-                contract,
-                premise,
+            _LOGGER.debug(
+                "Discovered meter IDs: partner=%s, contract=%s, premise=%s",
+                _redact_id(partner),
+                _redact_id(contract),
+                _redact_id(premise),
             )
-            _LOGGER.debug("Login successful (full discovery)")
+            _LOGGER.info("Login successful (meter IDs discovered)")
             return MeterInsightClient(session, {"partner": partner, "contract": contract, "premise": premise})
 
         except (InvalidAuth, CannotConnect, AccountNotFound):

@@ -1,7 +1,7 @@
 {
   "domain": "electric_ireland_insights",
   "name": "Electric Ireland Insights (Unofficial)",
-  "codeowners": ["@barreeeiroo", "@marcosvrs"],
+  "codeowners": ["@marcosvrs"],
   "config_flow": true,
   "dependencies": ["recorder"],
   "documentation": "https://github.com/marcosvrs/home-assistant-electric-ireland-insights",

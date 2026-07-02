@@ -7,7 +7,6 @@ ha_release: "2024.1"
 ha_iot_class: Cloud Polling
 ha_config_flow: true
 ha_codeowners:
-  - "@barreeeiroo"
   - "@marcosvrs"
 ha_domain: electric_ireland_insights
 ha_platforms:

@@ -14,6 +14,8 @@
 >
 > See [LEGAL.md](LEGAL.md) for full legal notice, privacy information, and trademark details.
 
+> **Moved from the old repo?** This integration now lives at `marcosvrs/home-assistant-electric-ireland-insights`. The previous fork (`marcosvrs/Home-Assistant-Electric-Ireland`) is archived. See the [migration guide](#migrating-from-the-archived-repo) below.
+
 Home Assistant integration with **Electric Ireland insights**.
 
 It is capable of:
@@ -142,6 +144,43 @@ This is a **major architectural change**. If you are upgrading from v0.2.x:
 * **1-3 day data delay**: Hourly meter readings are published by ESB with a 1-3 day delay. This integration cannot fetch data faster than ESB publishes it.
 * **Discount applies to future `_cost_discounted` data only by default**: Changing the discount percentage affects only newly fetched or re-fetched `_cost_discounted` data (the last 4 days on each poll). The `_cost` statistic always remains gross. To recalculate all historical `_cost_discounted` data with a new discount, use **Reconfigure → Import full history** after changing the discount. Standing charges and levies are never included.
 * **Scraping dependency**: The integration authenticates via the Electric Ireland web portal. Changes to the portal's HTML structure may break the login flow until the integration is updated.
+
+## Migrating from the archived repo
+
+If you previously installed this integration from `marcosvrs/Home-Assistant-Electric-Ireland`, that repository is now archived. Active development continues in this repository.
+
+### Why move?
+
+The local codebase evolved into a full v0.4.0 rewrite (external statistics, per-tariff support, Platinum-tier architecture) that is no longer compatible with the upstream v0.2.x fork. Rather than force-push over the fork history, we created this independent repository and archived the old one.
+
+### Migration steps
+
+1. **Remove the old HACS custom repository**
+   - In Home Assistant, go to **HACS → ⋮ → Custom repositories**.
+   - Remove `https://github.com/marcosvrs/Home-Assistant-Electric-Ireland`.
+
+2. **Add the new HACS custom repository**
+   - In **HACS → ⋮ → Custom repositories**, add:
+     ```
+     https://github.com/marcosvrs/home-assistant-electric-ireland-insights
+     ```
+   - Category: **Integration**.
+
+3. **Download the new version**
+   - Find **Electric Ireland Insights** in HACS and download it.
+   - Restart Home Assistant.
+
+4. **Update your Energy Dashboard**
+   - The new integration uses different statistic IDs: `electric_ireland_insights:{account}_consumption` and `electric_ireland_insights:{account}_cost`.
+   - Go to **Settings → Dashboards → Energy → Grid consumption** and replace the old statistics with the new ones.
+   - If you configured a discount, use the `_cost_discounted` statistic for cost tracking.
+
+5. **Optional: clean up old statistics**
+   - Old v0.2.x statistics remain in the recorder but are no longer updated. To remove them, go to **Developer tools → Statistics** and delete any old `electric_ireland_*` entries you no longer want.
+
+### Need help?
+
+Open issues and discussions in this repository only. The archived repository will not receive updates or support.
 
 ## Acknowledgements
 
