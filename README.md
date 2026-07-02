@@ -131,7 +131,7 @@ This is a **major architectural change**. If you are upgrading from v0.2.x:
 ## Known Limitations
 
 * **1-3 day data delay**: Hourly meter readings are published by ESB with a 1-3 day delay. This integration cannot fetch data faster than ESB publishes it.
-* **Cost excludes discounts and standing charges**: Reported cost is gross tariff cost with VAT. It does not include the 30% Off Direct Debit discount, standing charges, or levies.
+* **Discount applies to future data only by default**: Changing the discount percentage affects only newly fetched or re-fetched data (the last 4 days on each poll). To recalculate all historical cost data with a new discount, use **Reconfigure → Import full history** after changing the discount. Standing charges and levies are never included.
 * **Scraping dependency**: The integration authenticates via the Electric Ireland web portal. Changes to the portal's HTML structure may break the login flow until the integration is updated.
 
 ## Acknowledgements

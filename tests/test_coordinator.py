@@ -464,6 +464,161 @@ async def test_cost_statistics_with_discount(recorder_mock, hass, mock_config_en
     assert abs(last_sum - expected_total) < 0.01
 
 
+async def test_cost_statistics_with_discount_zero(recorder_mock, hass, mock_config_entry):
+    """Test discount_percentage=0 does not alter cost statistics."""
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        data={**mock_config_entry.data, "discount_percentage": 0},
+    )
+
+    datapoints = make_datapoints(1)
+
+    with (
+        patch(
+            "custom_components.electric_ireland_insights.coordinator.get_last_statistics",
+            return_value={},
+        ),
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI") as mock_api_class,
+        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
+    ):
+        mock_api_instance = AsyncMock()
+        _setup_api_mock(
+            mock_api_instance,
+            hourly_side_effect=[datapoints] + [[] for _ in range(50)],
+        )
+        mock_api_class.return_value = mock_api_instance
+
+        from custom_components.electric_ireland_insights.coordinator import (
+            ElectricIrelandCoordinator,
+        )
+
+        coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
+        await coordinator._async_update_data()
+
+    await async_wait_recording_done(hass)
+
+    start = datetime(2026, 3, 23, 0, 0, tzinfo=UTC)
+    end = datetime(2026, 3, 24, 0, 0, tzinfo=UTC)
+    stats = await get_instance(hass).async_add_executor_job(
+        statistics_during_period,
+        hass,
+        start,
+        end,
+        {STAT_ID_COST},
+        "hour",
+        None,
+        {"sum", "state"},
+    )
+    assert STAT_ID_COST in stats
+    last_sum = stats[STAT_ID_COST][-1]["sum"]
+    expected_total = sum(dp["cost"] for dp in datapoints)  # no discount
+    assert abs(last_sum - expected_total) < 0.01
+
+
+async def test_cost_statistics_with_discount_full(recorder_mock, hass, mock_config_entry):
+    """Test discount_percentage=100 zeroes out cost statistics."""
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        data={**mock_config_entry.data, "discount_percentage": 100},
+    )
+
+    datapoints = make_datapoints(1)
+
+    with (
+        patch(
+            "custom_components.electric_ireland_insights.coordinator.get_last_statistics",
+            return_value={},
+        ),
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI") as mock_api_class,
+        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
+    ):
+        mock_api_instance = AsyncMock()
+        _setup_api_mock(
+            mock_api_instance,
+            hourly_side_effect=[datapoints] + [[] for _ in range(50)],
+        )
+        mock_api_class.return_value = mock_api_instance
+
+        from custom_components.electric_ireland_insights.coordinator import (
+            ElectricIrelandCoordinator,
+        )
+
+        coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
+        await coordinator._async_update_data()
+
+    await async_wait_recording_done(hass)
+
+    start = datetime(2026, 3, 23, 0, 0, tzinfo=UTC)
+    end = datetime(2026, 3, 24, 0, 0, tzinfo=UTC)
+    stats = await get_instance(hass).async_add_executor_job(
+        statistics_during_period,
+        hass,
+        start,
+        end,
+        {STAT_ID_COST},
+        "hour",
+        None,
+        {"sum", "state"},
+    )
+    assert STAT_ID_COST in stats
+    last_sum = stats[STAT_ID_COST][-1]["sum"]
+    assert abs(last_sum - 0.0) < 0.01  # 100% discount = zero cost
+
+
+async def test_consumption_unaffected_by_discount(recorder_mock, hass, mock_config_entry):
+    """Test discount_percentage does not affect consumption statistics."""
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        data={**mock_config_entry.data, "discount_percentage": 50},
+    )
+
+    datapoints = make_datapoints(1)
+
+    with (
+        patch(
+            "custom_components.electric_ireland_insights.coordinator.get_last_statistics",
+            return_value={},
+        ),
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI") as mock_api_class,
+        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
+    ):
+        mock_api_instance = AsyncMock()
+        _setup_api_mock(
+            mock_api_instance,
+            hourly_side_effect=[datapoints] + [[] for _ in range(50)],
+        )
+        mock_api_class.return_value = mock_api_instance
+
+        from custom_components.electric_ireland_insights.coordinator import (
+            ElectricIrelandCoordinator,
+        )
+
+        coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
+        await coordinator._async_update_data()
+
+    await async_wait_recording_done(hass)
+
+    start = datetime(2026, 3, 23, 0, 0, tzinfo=UTC)
+    end = datetime(2026, 3, 24, 0, 0, tzinfo=UTC)
+    stats = await get_instance(hass).async_add_executor_job(
+        statistics_during_period,
+        hass,
+        start,
+        end,
+        {STAT_ID_CONSUMPTION},
+        "hour",
+        None,
+        {"sum", "state"},
+    )
+    assert STAT_ID_CONSUMPTION in stats
+    last_sum = stats[STAT_ID_CONSUMPTION][-1]["sum"]
+    expected_total = sum(dp["consumption"] for dp in datapoints)
+    assert abs(last_sum - expected_total) < 0.01
+
+
 # ---------------------------------------------------------------------------
 # Test 5: Statistic IDs follow the expected format
 # ---------------------------------------------------------------------------

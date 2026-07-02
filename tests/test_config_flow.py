@@ -3,6 +3,8 @@
 import logging
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResultType
 
@@ -636,3 +638,232 @@ async def test_reconfigure_same_password_stores_meter_ids(recorder_mock, hass, e
     assert updated.data["partner_id"] == "p_new"
     assert updated.data["contract_id"] == "c_new"
     assert updated.data["premise_id"] == "pr_new"
+
+
+# ---------------------------------------------------------------------------
+# Discount Tests
+# ---------------------------------------------------------------------------
+
+
+async def test_options_step_discount_default_zero(recorder_mock, hass, enable_custom_integrations):
+    """Test discount percentage defaults to 0 in options step."""
+    with (
+        patch("custom_components.electric_ireland_insights.config_flow.ElectricIrelandAPI") as mock_api_class,
+        patch("custom_components.electric_ireland_insights.config_flow.async_create_clientsession"),
+    ):
+        mock_api_instance = AsyncMock()
+        mock_api_instance.discover_accounts = AsyncMock(
+            return_value=[{"account_number": "100000001", "display_name": "100000001"}]
+        )
+        mock_api_instance.validate_credentials = AsyncMock(
+            return_value={"partner": "p1", "contract": "c1", "premise": "pr1"}
+        )
+        mock_api_class.return_value = mock_api_instance
+
+        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+        result2 = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {"username": "test@test.com", "password": "testpass"},
+        )
+        assert result2["step_id"] == "options"
+
+        # Submit with default values (discount not specified, should default to 0)
+        result3 = await hass.config_entries.flow.async_configure(
+            result2["flow_id"],
+            {"import_full_history": False},
+        )
+        assert result3["type"] == FlowResultType.CREATE_ENTRY
+        assert result3["data"]["discount_percentage"] == 0
+
+
+async def test_options_step_discount_stored_in_data(recorder_mock, hass, enable_custom_integrations):
+    """Test discount percentage is stored in config entry data."""
+    with (
+        patch("custom_components.electric_ireland_insights.config_flow.ElectricIrelandAPI") as mock_api_class,
+        patch("custom_components.electric_ireland_insights.config_flow.async_create_clientsession"),
+    ):
+        mock_api_instance = AsyncMock()
+        mock_api_instance.discover_accounts = AsyncMock(
+            return_value=[{"account_number": "100000001", "display_name": "100000001"}]
+        )
+        mock_api_instance.validate_credentials = AsyncMock(
+            return_value={"partner": "p1", "contract": "c1", "premise": "pr1"}
+        )
+        mock_api_class.return_value = mock_api_instance
+
+        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+        result2 = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {"username": "test@test.com", "password": "testpass"},
+        )
+
+        result3 = await hass.config_entries.flow.async_configure(
+            result2["flow_id"],
+            {"import_full_history": False, "discount_percentage": 25},
+        )
+        assert result3["type"] == FlowResultType.CREATE_ENTRY
+        assert result3["data"]["discount_percentage"] == 25
+
+
+async def test_reconfigure_preserves_discount(recorder_mock, hass, enable_custom_integrations):
+    """Test reconfigure preserves existing discount_percentage."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "username": "test@test.com",
+            "password": "oldpass",
+            "account_number": "100000001",
+            "partner_id": "p1",
+            "contract_id": "c1",
+            "premise_id": "pr1",
+            "discount_percentage": 30,
+        },
+        unique_id="100000001",
+    )
+    entry.add_to_hass(hass)
+
+    with (
+        patch("custom_components.electric_ireland_insights.config_flow.ElectricIrelandAPI") as mock_api_class,
+        patch("custom_components.electric_ireland_insights.config_flow.async_create_clientsession"),
+    ):
+        mock_api_instance = AsyncMock()
+        mock_api_instance.validate_credentials = AsyncMock(
+            return_value={"partner": "p2", "contract": "c2", "premise": "pr2"}
+        )
+        mock_api_class.return_value = mock_api_instance
+
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={
+                "source": config_entries.SOURCE_RECONFIGURE,
+                "entry_id": entry.entry_id,
+            },
+        )
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "reconfigure"
+
+        # Reconfigure with same password, no explicit discount change
+        result2 = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {"password": "oldpass", "force_rediscovery": False, "import_full_history": False},
+        )
+        assert result2["type"] == FlowResultType.ABORT
+        assert result2["reason"] == "reconfigure_successful"
+
+    updated = hass.config_entries.async_get_entry(entry.entry_id)
+    assert updated.data["discount_percentage"] == 30
+
+
+async def test_reconfigure_updates_discount(recorder_mock, hass, enable_custom_integrations):
+    """Test reconfigure updates discount_percentage."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "username": "test@test.com",
+            "password": "oldpass",
+            "account_number": "100000001",
+            "partner_id": "p1",
+            "contract_id": "c1",
+            "premise_id": "pr1",
+            "discount_percentage": 0,
+        },
+        unique_id="100000001",
+    )
+    entry.add_to_hass(hass)
+
+    with (
+        patch("custom_components.electric_ireland_insights.config_flow.ElectricIrelandAPI") as mock_api_class,
+        patch("custom_components.electric_ireland_insights.config_flow.async_create_clientsession"),
+    ):
+        mock_api_instance = AsyncMock()
+        mock_api_instance.validate_credentials = AsyncMock(
+            return_value={"partner": "p2", "contract": "c2", "premise": "pr2"}
+        )
+        mock_api_class.return_value = mock_api_instance
+
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={
+                "source": config_entries.SOURCE_RECONFIGURE,
+                "entry_id": entry.entry_id,
+            },
+        )
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "reconfigure"
+
+        # Update discount from 0 to 20
+        result2 = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {"password": "oldpass", "force_rediscovery": False, "import_full_history": False, "discount_percentage": 20},
+        )
+        assert result2["type"] == FlowResultType.ABORT
+        assert result2["reason"] == "reconfigure_successful"
+
+    updated = hass.config_entries.async_get_entry(entry.entry_id)
+    assert updated.data["discount_percentage"] == 20
+    # Other fields should be preserved
+    assert updated.data["username"] == "test@test.com"
+    assert updated.data["account_number"] == "100000001"
+
+
+async def test_options_step_discount_validation_range(recorder_mock, hass, enable_custom_integrations):
+    """Test discount percentage must be 0-100."""
+    with (
+        patch("custom_components.electric_ireland_insights.config_flow.ElectricIrelandAPI") as mock_api_class,
+        patch("custom_components.electric_ireland_insights.config_flow.async_create_clientsession"),
+    ):
+        mock_api_instance = AsyncMock()
+        mock_api_instance.discover_accounts = AsyncMock(
+            return_value=[{"account_number": "100000001", "display_name": "100000001"}]
+        )
+        mock_api_instance.validate_credentials = AsyncMock(
+            return_value={"partner": "p1", "contract": "c1", "premise": "pr1"}
+        )
+        mock_api_class.return_value = mock_api_instance
+
+        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+        result2 = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {"username": "test@test.com", "password": "testpass"},
+        )
+        assert result2["step_id"] == "options"
+
+        # Invalid discount values (101, -1) should raise voluptuous validation errors
+        # HA's config flow framework propagates schema validation errors as exceptions
+        with pytest.raises(Exception) as exc_info_101:
+            await hass.config_entries.flow.async_configure(
+                result2["flow_id"],
+                {"import_full_history": False, "discount_percentage": 101},
+            )
+        assert "Schema validation failed" in str(exc_info_101.value)
+
+        # Start fresh flow for negative test since previous failed
+        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+        result2 = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {"username": "test@test.com", "password": "testpass"},
+        )
+
+        with pytest.raises(Exception) as exc_info_neg:
+            await hass.config_entries.flow.async_configure(
+                result2["flow_id"],
+                {"import_full_history": False, "discount_percentage": -1},
+            )
+        assert "Schema validation failed" in str(exc_info_neg.value)
+
+        # Valid boundary values should succeed
+        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+        result2 = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {"username": "test@test.com", "password": "testpass"},
+        )
+        result3 = await hass.config_entries.flow.async_configure(
+            result2["flow_id"],
+            {"import_full_history": False, "discount_percentage": 100},
+        )
+        assert result3["type"] == FlowResultType.CREATE_ENTRY
+        assert result3["data"]["discount_percentage"] == 100

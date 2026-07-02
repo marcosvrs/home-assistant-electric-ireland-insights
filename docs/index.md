@@ -149,6 +149,7 @@ To update your password or troubleshoot data import issues, use **Settings → D
 | **Password** | Re-enter your current password (required to re-authenticate the session, even if unchanged) |
 | **Re-discover meter IDs** | Clears the cached meter identifiers (partner, contract, premise) and forces the integration to re-discover them from the Electric Ireland portal on the next refresh. Use this when data imports have stopped but your credentials are still valid — typically caused by Electric Ireland changing internal account identifiers after a meter swap or account migration. |
 | **Import full history** | Fetches all available historical data from your bill periods (typically 6–13 months). Runs as a background task without blocking Home Assistant. Only needed once — subsequent polls keep data current automatically. |
+| **Discount percentage** | Your electricity plan discount (e.g., 20 for 20% Saver). Applied to hourly cost values going forward. To also recalculate existing cost data with the new discount, select **Import full history** after changing the discount. |
 
 If the password has changed, cached meter IDs are cleared automatically — you don't need to check the re-discovery option.
 
@@ -207,7 +208,7 @@ automation:
 ## Known limitations
 
 - **1–3 day data delay**: Hourly readings are published by ESB with a delay; the integration cannot fetch data faster than ESB publishes it.
-- **Cost excludes discounts and standing charges**: The reported cost is the gross tariff cost with VAT. It does not include the 30% Off Direct Debit discount, standing charges, or levies.
+- **Discount applies to future data only by default**: Changing the discount percentage affects only newly fetched or re-fetched data (the last 4 days on each poll). To recalculate all historical cost data with a new discount, use **Reconfigure → Import full history** after changing the discount. Standing charges and levies are never included.
 - **Scraping dependency**: The integration authenticates via the Electric Ireland web portal. Changes to the portal's HTML structure may break the login flow until the integration is updated.
 - **Single account per entry**: Each config entry supports one electricity account. To monitor multiple accounts, add the integration once per account.
 
