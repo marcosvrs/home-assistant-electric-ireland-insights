@@ -3,7 +3,7 @@ title: Electric Ireland Insights (Unofficial)
 description: Instructions on how to integrate Electric Ireland energy data into Home Assistant.
 ha_category:
   - Energy
-ha_release: "2024.1"
+ha_release: "2026.3"
 ha_iot_class: Cloud Polling
 ha_config_flow: true
 ha_codeowners:
@@ -24,7 +24,7 @@ ha_quality_scale: platinum
 
 ## Prerequisites
 
-- **Home Assistant 2025.4.0** or newer
+- **Home Assistant 2026.3.0** or newer
 - An active Electric Ireland account with **Insights access** enabled
 - An **electricity** account (gas-only accounts are not supported)
 - A **smart meter** installed at your premises (required for hourly data)

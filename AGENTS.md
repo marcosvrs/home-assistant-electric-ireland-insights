@@ -17,7 +17,7 @@ Home Assistant custom integration (HACS) for **Electric Ireland Insights**. Scra
 ├── .pre-commit-config.yaml                        # Pre-commit hooks: ruff, mypy, codespell, whitespace
 ├── pyproject.toml                                 # Build config, dev deps, ruff + mypy + pytest settings
 ├── mise.toml                                      # Dev env: Python 3.14, auto .venv
-├── hacs.json                                      # HACS metadata (requires HA 2025.4.0, HACS 2.0.0)
+├── hacs.json                                      # HACS metadata (requires HA 2026.3.0, HACS 2.0.0)
 └── requirements.txt                               # Pip requirements
 ```
 

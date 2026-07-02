@@ -115,7 +115,7 @@ rules:
     comment: icons.json defines entity icon translations (mdi:clock-check-outline for last_import_time, mdi:calendar-clock for data_freshness_days).
   integration-owner:
     status: done
-    comment: manifest.json declares codeowners ["@barreeeiroo"].
+    comment: manifest.json declares codeowners ["@marcosvrs"].
   inject-websession:
     status: done
     comment: config_flow.py and coordinator.py create HA client sessions with async_create_clientsession(hass, cookie_jar=...).
