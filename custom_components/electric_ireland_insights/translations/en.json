@@ -24,10 +24,12 @@
         "title": "Import Options",
         "description": "The integration will import the last 30 days of data during setup. You can also import all available historical data (typically 6–13 months) as a background task.",
         "data": {
-          "import_full_history": "Import full history"
+          "import_full_history": "Import full history",
+          "discount_percentage": "Discount percentage (%)"
         },
         "data_description": {
-          "import_full_history": "Fetch all available historical data from your bill periods. This runs in the background and may take 10–30 minutes. You can also trigger this later via Reconfigure."
+          "import_full_history": "Fetch all available historical data from your bill periods. This runs in the background and may take 10–30 minutes. You can also trigger this later via Reconfigure.",
+          "discount_percentage": "Enter your discount percentage (e.g., 20 for 20% Saver discount). This will be applied to the hourly cost values before importing. Standing charges are not included."
         }
       },
       "reauth_confirm": {
@@ -43,12 +45,14 @@
         "data": {
           "password": "Password",
           "force_rediscovery": "Re-discover meter IDs from the portal",
-          "import_full_history": "Import full history"
+          "import_full_history": "Import full history",
+          "discount_percentage": "Discount percentage (%)"
         },
         "data_description": {
           "password": "Your current portal password (re-enter even if unchanged)",
           "force_rediscovery": "Clear cached meter identifiers (partner, contract, premise) and re-discover them from the portal on the next data refresh. Use this if data imports have stopped but your credentials are correct.",
-          "import_full_history": "Fetch all available historical data from your bill periods (typically 6–13 months). This runs as a background task and may take 10–30 minutes. Only needed once — subsequent polls keep data current automatically."
+          "import_full_history": "Fetch all available historical data from your bill periods (typically 6–13 months). This runs as a background task and may take 10–30 minutes. Only needed once — subsequent polls keep data current automatically.",
+          "discount_percentage": "Enter your discount percentage (e.g., 20 for 20% Saver discount). This will be applied to the hourly cost values before importing. Standing charges are not included."
         }
       }
     },

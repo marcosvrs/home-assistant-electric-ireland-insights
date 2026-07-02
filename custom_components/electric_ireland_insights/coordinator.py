@@ -43,7 +43,6 @@ TARIFF_BUCKET_MAP_DISPLAY: dict[str, str] = {
     "mid_peak": "Mid-Peak",
     "on_peak": "On-Peak",
 }
-SMART_TARIFF_BUCKETS = ("off_peak", "mid_peak", "on_peak")
 
 
 class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):  # type: ignore[misc]
@@ -420,24 +419,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):  # typ
             _LOGGER.exception("Unexpected error during background backfill")
 
     async def _should_import_per_tariff_statistics(self, seen_buckets: set[str]) -> bool:
-        if not seen_buckets:
-            return False
-
-        if seen_buckets - {"flat_rate"}:
-            return True
-
-        return await self._has_existing_smart_tariff_statistics()
-
-    async def _has_existing_smart_tariff_statistics(self) -> bool:
-        statistic_types: set[Literal["last_reset", "max", "mean", "min", "state", "sum"]] = {"sum"}
-        for bucket in SMART_TARIFF_BUCKETS:
-            statistic_id = f"{DOMAIN}:{self._account}_consumption_{bucket}"
-            existing = await get_instance(self.hass).async_add_executor_job(
-                partial(get_last_statistics, self.hass, 1, statistic_id, True, statistic_types)
-            )
-            if existing.get(statistic_id):
-                return True
-        return False
+        return bool(seen_buckets - {"flat_rate"})
 
     async def _insert_per_tariff_statistics(
         self,
@@ -470,10 +452,13 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):  # typ
         name_override: str | None = None,
     ) -> None:
         filtered = []
+        discount = self._config_entry.data.get("discount_percentage", 0)
         for dp in datapoints:
             value = dp.get(metric)
             if value is None:
                 continue
+            if metric == "cost" and discount:
+                value = float(value) * (1 - discount / 100)
             interval_end = dp["intervalEnd"]
             start = datetime.fromtimestamp(interval_end, tz=UTC).replace(minute=0, second=0, microsecond=0)
             filtered.append((start, float(value)))

@@ -131,6 +131,7 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
                     "contract_id": self._meter_ids.get("contract"),
                     "premise_id": self._meter_ids.get("premise"),
                     "import_full_history": user_input.get("import_full_history", False),
+                    "discount_percentage": user_input.get("discount_percentage", 0),
                 },
             )
 
@@ -139,6 +140,9 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
             data_schema=vol.Schema(
                 {
                     vol.Optional("import_full_history", default=True): bool,
+                    vol.Optional("discount_percentage", default=0): vol.All(
+                        vol.Coerce(int), vol.Range(min=0, max=100)
+                    ),
                 }
             ),
         )
@@ -217,6 +221,7 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
             else:
                 password_changed = password != entry.data["password"]
                 import_full_history = user_input.get("import_full_history", False)
+                discount_percentage = user_input.get("discount_percentage", entry.data.get("discount_percentage", 0))
                 if force_rediscovery or password_changed:
                     new_data = {
                         **entry.data,
@@ -225,6 +230,7 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
                         "contract_id": None,
                         "premise_id": None,
                         "import_full_history": import_full_history,
+                        "discount_percentage": discount_percentage,
                     }
                 else:
                     new_data = {
@@ -234,6 +240,7 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
                         "contract_id": meter_ids.get("contract"),
                         "premise_id": meter_ids.get("premise"),
                         "import_full_history": import_full_history,
+                        "discount_percentage": discount_percentage,
                     }
                 return self.async_update_reload_and_abort(entry, data=new_data)
 
@@ -245,6 +252,9 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
                         vol.Required("password"): str,
                         vol.Optional("force_rediscovery", default=False): bool,
                         vol.Optional("import_full_history", default=False): bool,
+                        vol.Optional("discount_percentage", default=entry.data.get("discount_percentage", 0)): vol.All(
+                            vol.Coerce(int), vol.Range(min=0, max=100)
+                        ),
                     }
                 ),
                 user_input or {"password": entry.data["password"]},

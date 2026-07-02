@@ -174,8 +174,56 @@ async def test_tariff_backfill_uses_30_days_when_flag_missing(recorder_mock, has
         await coordinator.async_tariff_backfill()
 
         assert mock_api_instance.get_hourly_usage.call_count == INITIAL_LOOKBACK_DAYS
+        assert entry.data.get("tariff_stats_initialized") is True
 
-    assert entry.data.get("tariff_stats_initialized") is True
+
+# ===========================================================================
+# PER-TARIFF STATISTICS DECISION TESTS
+# ===========================================================================
+
+
+async def test_flat_rate_with_old_smart_stats_does_not_import_per_tariff(
+    recorder_mock, hass, mock_config_entry
+):
+    """Flat-rate current data must NOT import per-tariff stats even if old smart stats exist in recorder."""
+    mock_config_entry.add_to_hass(hass)
+
+    # Simulate old smart tariff statistics existing in the database
+    old_smart_stats = {
+        f"{DOMAIN}:{ACCOUNT}_consumption_off_peak": [{"sum": 100.0}],
+        f"{DOMAIN}:{ACCOUNT}_consumption_mid_peak": [{"sum": 50.0}],
+        f"{DOMAIN}:{ACCOUNT}_consumption_on_peak": [{"sum": 200.0}],
+    }
+
+    with (
+        patch(
+            "custom_components.electric_ireland_insights.coordinator.get_last_statistics",
+            return_value=old_smart_stats,
+        ),
+        patch(
+            "custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI"
+        ) as mock_api_class,
+        patch(
+            "custom_components.electric_ireland_insights.coordinator.async_create_clientsession"
+        ),
+    ):
+        mock_api_instance = AsyncMock()
+        # Return flat-rate data (no smart buckets)
+        dps = make_datapoints(1, tariff_bucket="flat_rate")
+        _setup_api_mock(mock_api_instance, hourly_return=dps)
+        mock_api_class.return_value = mock_api_instance
+
+        from custom_components.electric_ireland_insights.coordinator import (
+            ElectricIrelandCoordinator,
+        )
+
+        coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
+
+        with patch.object(
+            coordinator, "_insert_per_tariff_statistics", AsyncMock()
+        ) as mock_insert:
+            await coordinator._async_update_data()
+            assert mock_insert.call_count == 0
 
 
 async def test_tariff_backfill_skips_when_flag_set(recorder_mock, hass, mock_config_entry):
@@ -358,6 +406,61 @@ async def test_cost_statistics_correct(recorder_mock, hass, mock_config_entry):
 
     last_sum = stats[STAT_ID_COST][-1]["sum"]
     expected_total = sum(dp["cost"] for dp in datapoints)
+    assert abs(last_sum - expected_total) < 0.01
+
+
+async def test_cost_statistics_with_discount(recorder_mock, hass, mock_config_entry):
+    """Test discount percentage is applied to cost statistics."""
+    mock_config_entry.add_to_hass(hass)
+    # Update config entry with 20% discount
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        data={**mock_config_entry.data, "discount_percentage": 20},
+    )
+
+    datapoints = make_datapoints(1)
+
+    with (
+        patch(
+            "custom_components.electric_ireland_insights.coordinator.get_last_statistics",
+            return_value={},
+        ),
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI") as mock_api_class,
+        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
+    ):
+        mock_api_instance = AsyncMock()
+        _setup_api_mock(
+            mock_api_instance,
+            hourly_side_effect=[datapoints] + [[] for _ in range(50)],
+        )
+        mock_api_class.return_value = mock_api_instance
+
+        from custom_components.electric_ireland_insights.coordinator import (
+            ElectricIrelandCoordinator,
+        )
+
+        coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
+        await coordinator._async_update_data()
+
+    await async_wait_recording_done(hass)
+
+    start = datetime(2026, 3, 23, 0, 0, tzinfo=UTC)
+    end = datetime(2026, 3, 24, 0, 0, tzinfo=UTC)
+    stats = await get_instance(hass).async_add_executor_job(
+        statistics_during_period,
+        hass,
+        start,
+        end,
+        {STAT_ID_COST},
+        "hour",
+        None,
+        {"sum", "state"},
+    )
+    assert STAT_ID_COST in stats
+    assert len(stats[STAT_ID_COST]) == 24
+
+    last_sum = stats[STAT_ID_COST][-1]["sum"]
+    expected_total = sum(dp["cost"] for dp in datapoints) * 0.8  # 20% discount
     assert abs(last_sum - expected_total) < 0.01
 
 
@@ -1532,12 +1635,12 @@ async def test_flat_rate_only_skips_per_tariff_stats(recorder_mock, hass, mock_c
     assert stat_flat not in stats or len(stats[stat_flat]) == 0
 
 
-async def test_flat_rate_only_creates_per_tariff_stats_after_smart_tariff_history(
+async def test_flat_rate_only_after_smart_history_does_not_create_per_tariff(
     recorder_mock,
     hass,
     mock_config_entry,
 ):
-    """Temporary flat-rate contract windows keep per-tariff dashboards continuous for smart tariff accounts."""
+    """Flat-rate current data must NOT create per-tariff stats even if old smart stats exist in recorder."""
     mock_config_entry.add_to_hass(hass)
 
     flat = make_datapoints(1, tariff_bucket="flat_rate")
@@ -1587,8 +1690,7 @@ async def test_flat_rate_only_creates_per_tariff_stats_after_smart_tariff_histor
         None,
         {"sum", "state"},
     )
-    assert stat_flat in stats
-    assert len(stats[stat_flat]) == 24
+    assert stat_flat not in stats or len(stats.get(stat_flat, [])) == 0
 
 
 async def test_single_non_flat_bucket_creates_per_tariff_stats(recorder_mock, hass, mock_config_entry):
