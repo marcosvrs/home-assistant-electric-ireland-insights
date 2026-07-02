@@ -30,7 +30,7 @@ PARALLEL_UPDATES = 0
 
 
 @dataclass(frozen=True, kw_only=True)
-class ElectricIrelandSensorDescription(SensorEntityDescription):  # type: ignore[misc]
+class ElectricIrelandSensorDescription(SensorEntityDescription):
     value_fn: Callable[[CoordinatorData], datetime | float | int | None]
 
 
@@ -78,7 +78,7 @@ async def async_setup_entry(
     )
 
 
-class ElectricIrelandDiagnosticSensor(CoordinatorEntity[ElectricIrelandCoordinator], SensorEntity):  # type: ignore[misc]
+class ElectricIrelandDiagnosticSensor(CoordinatorEntity[ElectricIrelandCoordinator], SensorEntity):
     entity_description: ElectricIrelandSensorDescription
     _attr_has_entity_name = True
 
@@ -95,6 +95,8 @@ class ElectricIrelandDiagnosticSensor(CoordinatorEntity[ElectricIrelandCoordinat
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, account_number)},
             name=f"Electric Ireland Insights ({account_number})",
+            manufacturer="Electric Ireland",
+            model="Insights Portal",
             entry_type=DeviceEntryType.SERVICE,
         )
 

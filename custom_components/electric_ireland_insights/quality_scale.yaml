@@ -28,7 +28,7 @@ rules:
     comment: manifest.json only adds beautifulsoup4; HTTP uses HA aiohttp.
   devices:
     status: done
-    comment: sensor.py defines DeviceInfo with identifiers, name, and entry_type.
+    comment: sensor.py defines DeviceInfo with identifiers, name, manufacturer, model, and entry_type.
   diagnostics:
     status: done
     comment: diagnostics.py implements async_get_config_entry_diagnostics.
@@ -61,7 +61,7 @@ rules:
     comment: docs/index.md has parameter table (username, password, account_number).
   docs-known-limitations:
     status: done
-    comment: docs/index.md has "Known limitations" (1-3 day delay, cost excludes discounts, scraping dependency).
+    comment: docs/index.md has "Known limitations" (1-3 day provider delay, discount applies to _cost_discounted data only by default, scraping dependency, standing charges not included).
   docs-removal-instructions:
     status: done
     comment: docs/index.md has removal instructions.
@@ -151,7 +151,7 @@ rules:
     comment: __init__.py validates credentials in async_setup_entry before finishing setup.
   test-coverage:
     status: done
-    comment: pytest tests/ --cov --cov-fail-under=95 enforced in CI with 211 tests across unit and integration suites.
+    comment: pytest tests/ --cov --cov-fail-under=95 enforced in CI with 225 tests across unit and integration suites.
   unique-config-entry:
     status: done
     comment: config_flow.py calls async_set_unique_id(account_number) and aborts duplicates.

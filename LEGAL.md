@@ -56,7 +56,7 @@ The integration's icon is used for identification purposes within the Home Assis
 
 ## Origin
 
-This project is a fork of [barreeeiroo/Home-Assistant-Electric-Ireland](https://github.com/barreeeiroo/Home-Assistant-Electric-Ireland), originally created by [@barreeeiroo](https://github.com/barreeeiroo) and licensed under the GNU General Public License v3.0. This fork continues and extends the original work under the same license.
+This project is a continuation of [barreeeiroo/Home-Assistant-Electric-Ireland](https://github.com/barreeeiroo/Home-Assistant-Electric-Ireland), originally created by [@barreeeiroo](https://github.com/barreeeiroo) and licensed under the GNU General Public License v3.0. It builds upon and extends the original work under the same license. While the original project was a GitHub fork, this repository is an independent project that carries the original vision forward with a substantially rewritten codebase.
 
 ## Contact
 

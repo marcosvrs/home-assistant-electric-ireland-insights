@@ -115,6 +115,8 @@ async def test_device_info_has_account(hass, enable_custom_integrations, mock_co
     last_import_desc = next(d for d in DIAGNOSTIC_SENSORS if d.key == "last_import_time")
     sensor = ElectricIrelandDiagnosticSensor(mock_coordinator, last_import_desc, "100000001")
     assert ("electric_ireland_insights", "100000001") in sensor.device_info["identifiers"]
+    assert sensor.device_info["manufacturer"] == "Electric Ireland"
+    assert sensor.device_info["model"] == "Insights Portal"
 
 
 async def test_has_entity_name_is_true(hass, enable_custom_integrations, mock_config_entry):

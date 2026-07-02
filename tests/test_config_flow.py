@@ -4,9 +4,8 @@ import logging
 from unittest.mock import AsyncMock, patch
 
 import pytest
-
 from homeassistant import config_entries
-from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.data_entry_flow import FlowResultType, InvalidData
 
 from custom_components.electric_ireland_insights.const import DOMAIN
 from custom_components.electric_ireland_insights.exceptions import (
@@ -798,7 +797,12 @@ async def test_reconfigure_updates_discount(recorder_mock, hass, enable_custom_i
         # Update discount from 0 to 20
         result2 = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {"password": "oldpass", "force_rediscovery": False, "import_full_history": False, "discount_percentage": 20},
+            {
+                "password": "oldpass",
+                "force_rediscovery": False,
+                "import_full_history": False,
+                "discount_percentage": 20,
+            },
         )
         assert result2["type"] == FlowResultType.ABORT
         assert result2["reason"] == "reconfigure_successful"
@@ -833,13 +837,12 @@ async def test_options_step_discount_validation_range(recorder_mock, hass, enabl
         assert result2["step_id"] == "options"
 
         # Invalid discount values (101, -1) should raise voluptuous validation errors
-        # HA's config flow framework propagates schema validation errors as exceptions
-        with pytest.raises(Exception) as exc_info_101:
+        # HA's config flow framework propagates schema validation errors as InvalidData
+        with pytest.raises(InvalidData, match="Schema validation failed"):
             await hass.config_entries.flow.async_configure(
                 result2["flow_id"],
                 {"import_full_history": False, "discount_percentage": 101},
             )
-        assert "Schema validation failed" in str(exc_info_101.value)
 
         # Start fresh flow for negative test since previous failed
         result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
@@ -848,12 +851,11 @@ async def test_options_step_discount_validation_range(recorder_mock, hass, enabl
             {"username": "test@test.com", "password": "testpass"},
         )
 
-        with pytest.raises(Exception) as exc_info_neg:
+        with pytest.raises(InvalidData, match="Schema validation failed"):
             await hass.config_entries.flow.async_configure(
                 result2["flow_id"],
                 {"import_full_history": False, "discount_percentage": -1},
             )
-        assert "Schema validation failed" in str(exc_info_neg.value)
 
         # Valid boundary values should succeed
         result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})

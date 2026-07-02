@@ -25,7 +25,7 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
 )
 
 
-class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg,misc]  # HA ConfigFlow metaclass requires domain=; misc covers TypedDict compatibility
+class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 2
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
@@ -140,9 +140,7 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
             data_schema=vol.Schema(
                 {
                     vol.Optional("import_full_history", default=True): bool,
-                    vol.Optional("discount_percentage", default=0): vol.All(
-                        vol.Coerce(int), vol.Range(min=0, max=100)
-                    ),
+                    vol.Optional("discount_percentage", default=0): vol.All(vol.Coerce(int), vol.Range(min=0, max=100)),
                 }
             ),
         )

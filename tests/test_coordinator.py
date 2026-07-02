@@ -183,9 +183,7 @@ async def test_tariff_backfill_uses_30_days_when_flag_missing(recorder_mock, has
 # ===========================================================================
 
 
-async def test_flat_rate_with_old_smart_stats_does_not_import_per_tariff(
-    recorder_mock, hass, mock_config_entry
-):
+async def test_flat_rate_with_old_smart_stats_does_not_import_per_tariff(recorder_mock, hass, mock_config_entry):
     """Flat-rate current data must NOT import per-tariff stats even if old smart stats exist in recorder."""
     mock_config_entry.add_to_hass(hass)
 
@@ -201,12 +199,8 @@ async def test_flat_rate_with_old_smart_stats_does_not_import_per_tariff(
             "custom_components.electric_ireland_insights.coordinator.get_last_statistics",
             return_value=old_smart_stats,
         ),
-        patch(
-            "custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI"
-        ) as mock_api_class,
-        patch(
-            "custom_components.electric_ireland_insights.coordinator.async_create_clientsession"
-        ),
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI") as mock_api_class,
+        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
     ):
         mock_api_instance = AsyncMock()
         # Return flat-rate data (no smart buckets)
@@ -220,9 +214,7 @@ async def test_flat_rate_with_old_smart_stats_does_not_import_per_tariff(
 
         coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
 
-        with patch.object(
-            coordinator, "_insert_per_tariff_statistics", AsyncMock()
-        ) as mock_insert:
+        with patch.object(coordinator, "_insert_per_tariff_statistics", AsyncMock()) as mock_insert:
             await coordinator._async_update_data()
             assert mock_insert.call_count == 0
 

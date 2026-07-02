@@ -45,7 +45,7 @@ TARIFF_BUCKET_MAP_DISPLAY: dict[str, str] = {
 }
 
 
-class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):  # type: ignore[misc]
+class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
     """Coordinator to fetch EI data and import external statistics."""
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry) -> None:
