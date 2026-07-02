@@ -263,6 +263,16 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):  # typ
                 f"{DOMAIN}:{self._account}_cost",
                 "EUR",
             )
+            discount = self._config_entry.data.get("discount_percentage", 0)
+            if discount:
+                await self._insert_statistics(
+                    datapoints,
+                    "cost",
+                    f"{DOMAIN}:{self._account}_cost_discounted",
+                    "EUR",
+                    name_override=f"Electric Ireland Cost Discounted ({self._account})",
+                    discount=discount,
+                )
             _LOGGER.debug("Imported %d aggregate datapoints for account=%s", len(datapoints), self._account)
 
             buckets: dict[str, list[ElectricIrelandDatapoint]] = {}
@@ -276,7 +286,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):  # typ
                 {k: len(v) for k, v in buckets.items()},
             )
             if await self._should_import_per_tariff_statistics(seen_buckets):
-                await self._insert_per_tariff_statistics(buckets)
+                await self._insert_per_tariff_statistics(buckets, discount=discount)
 
             last_ts = max((dp["intervalEnd"] for dp in datapoints), default=None)
             latest_data_ts = datetime.fromtimestamp(last_ts, tz=UTC) if last_ts else None
@@ -400,6 +410,16 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):  # typ
                     f"{DOMAIN}:{self._account}_cost",
                     "EUR",
                 )
+                discount = self._config_entry.data.get("discount_percentage", 0)
+                if discount:
+                    await self._insert_statistics(
+                        datapoints,
+                        "cost",
+                        f"{DOMAIN}:{self._account}_cost_discounted",
+                        "EUR",
+                        name_override=f"Electric Ireland Cost Discounted ({self._account})",
+                        discount=discount,
+                    )
 
                 buckets: dict[str, list[ElectricIrelandDatapoint]] = {}
                 for dp in datapoints:
@@ -407,7 +427,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):  # typ
 
                 seen_buckets = set(buckets.keys())
                 if await self._should_import_per_tariff_statistics(seen_buckets):
-                    await self._insert_per_tariff_statistics(buckets)
+                    await self._insert_per_tariff_statistics(buckets, discount=discount)
 
             new_data = {**dict(self._config_entry.data), "tariff_stats_initialized": True}
             self.hass.config_entries.async_update_entry(self._config_entry, data=new_data)
@@ -424,6 +444,8 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):  # typ
     async def _insert_per_tariff_statistics(
         self,
         buckets: dict[str, list[ElectricIrelandDatapoint]],
+        *,
+        discount: int = 0,
     ) -> None:
         for bucket_name, bucket_dps in buckets.items():
             display = TARIFF_BUCKET_MAP_DISPLAY.get(bucket_name, bucket_name.replace("_", " ").title())
@@ -441,6 +463,15 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):  # typ
                 "EUR",
                 name_override=f"Electric Ireland Cost {display} ({self._account})",
             )
+            if discount:
+                await self._insert_statistics(
+                    bucket_dps,
+                    "cost",
+                    f"{DOMAIN}:{self._account}_cost_{bucket_name}_discounted",
+                    "EUR",
+                    name_override=f"Electric Ireland Cost {display} Discounted ({self._account})",
+                    discount=discount,
+                )
 
     async def _insert_statistics(
         self,
@@ -450,9 +481,9 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):  # typ
         unit: str,
         *,
         name_override: str | None = None,
+        discount: int = 0,
     ) -> None:
         filtered = []
-        discount = self._config_entry.data.get("discount_percentage", 0)
         for dp in datapoints:
             value = dp.get(metric)
             if value is None:

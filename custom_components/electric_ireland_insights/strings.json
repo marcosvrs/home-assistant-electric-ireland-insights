@@ -29,7 +29,7 @@
         },
         "data_description": {
           "import_full_history": "Fetch all available historical data from your bill periods. This runs in the background and may take 10–30 minutes. You can also trigger this later via Reconfigure.",
-          "discount_percentage": "Enter your discount percentage (e.g., 20 for 20% Saver discount). This will be applied to hourly cost values. Standing charges are not included."
+          "discount_percentage": "Enter your discount percentage (e.g., 20 for 20% Saver discount). A separate '_cost_discounted' statistic will be created with the discount applied. Standing charges are not included."
         }
       },
       "reauth_confirm": {
@@ -52,7 +52,7 @@
           "password": "Your current portal password (re-enter even if unchanged)",
           "force_rediscovery": "Clear cached meter identifiers (partner, contract, premise) and re-discover them from the portal on the next data refresh. Use this if data imports have stopped but your credentials are correct.",
           "import_full_history": "Fetch all available historical data from your bill periods (typically 6–13 months). This runs as a background task and may take 10–30 minutes. Only needed once — subsequent polls keep data current automatically.",
-          "discount_percentage": "Enter your discount percentage (e.g., 20 for 20% Saver discount). This will be applied to hourly cost values going forward. To apply it to existing data as well, select Import full history after changing the discount."
+          "discount_percentage": "Enter your discount percentage (e.g., 20 for 20% Saver discount). A separate '_cost_discounted' statistic will be created with the discount applied. To recalculate existing discounted data, select Import full history after changing the discount."
         }
       }
     },

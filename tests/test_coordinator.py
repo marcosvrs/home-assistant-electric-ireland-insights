@@ -31,6 +31,7 @@ from custom_components.electric_ireland_insights.exceptions import (
 ACCOUNT = "100000001"
 STAT_ID_CONSUMPTION = f"{DOMAIN}:{ACCOUNT}_consumption"
 STAT_ID_COST = f"{DOMAIN}:{ACCOUNT}_cost"
+STAT_ID_COST_DISCOUNTED = f"{DOMAIN}:{ACCOUNT}_cost_discounted"
 TEST_METER_IDS = {"partner": "P1", "contract": "C1", "premise": "PR1"}
 
 
@@ -409,10 +410,9 @@ async def test_cost_statistics_correct(recorder_mock, hass, mock_config_entry):
     assert abs(last_sum - expected_total) < 0.01
 
 
-async def test_cost_statistics_with_discount(recorder_mock, hass, mock_config_entry):
-    """Test discount percentage is applied to cost statistics."""
+async def test_cost_statistics_gross_unchanged_with_discount(recorder_mock, hass, mock_config_entry):
+    """Test _cost statistic always stays gross even when discount is configured."""
     mock_config_entry.add_to_hass(hass)
-    # Update config entry with 20% discount
     hass.config_entries.async_update_entry(
         mock_config_entry,
         data={**mock_config_entry.data, "discount_percentage": 20},
@@ -451,21 +451,23 @@ async def test_cost_statistics_with_discount(recorder_mock, hass, mock_config_en
         hass,
         start,
         end,
-        {STAT_ID_COST},
+        {STAT_ID_COST, STAT_ID_COST_DISCOUNTED},
         "hour",
         None,
         {"sum", "state"},
     )
     assert STAT_ID_COST in stats
+    assert STAT_ID_COST_DISCOUNTED in stats
     assert len(stats[STAT_ID_COST]) == 24
+    assert len(stats[STAT_ID_COST_DISCOUNTED]) == 24
 
-    last_sum = stats[STAT_ID_COST][-1]["sum"]
-    expected_total = sum(dp["cost"] for dp in datapoints) * 0.8  # 20% discount
-    assert abs(last_sum - expected_total) < 0.01
+    gross_total = sum(dp["cost"] for dp in datapoints)
+    assert abs(stats[STAT_ID_COST][-1]["sum"] - gross_total) < 0.01
+    assert abs(stats[STAT_ID_COST_DISCOUNTED][-1]["sum"] - gross_total * 0.8) < 0.01
 
 
-async def test_cost_statistics_with_discount_zero(recorder_mock, hass, mock_config_entry):
-    """Test discount_percentage=0 does not alter cost statistics."""
+async def test_cost_discounted_statistic_not_created_when_discount_zero(recorder_mock, hass, mock_config_entry):
+    """Test _cost_discounted statistic is not created when discount is 0."""
     mock_config_entry.add_to_hass(hass)
     hass.config_entries.async_update_entry(
         mock_config_entry,
@@ -505,19 +507,19 @@ async def test_cost_statistics_with_discount_zero(recorder_mock, hass, mock_conf
         hass,
         start,
         end,
-        {STAT_ID_COST},
+        {STAT_ID_COST, STAT_ID_COST_DISCOUNTED},
         "hour",
         None,
         {"sum", "state"},
     )
     assert STAT_ID_COST in stats
-    last_sum = stats[STAT_ID_COST][-1]["sum"]
-    expected_total = sum(dp["cost"] for dp in datapoints)  # no discount
-    assert abs(last_sum - expected_total) < 0.01
+    assert STAT_ID_COST_DISCOUNTED not in stats
+    gross_total = sum(dp["cost"] for dp in datapoints)
+    assert abs(stats[STAT_ID_COST][-1]["sum"] - gross_total) < 0.01
 
 
-async def test_cost_statistics_with_discount_full(recorder_mock, hass, mock_config_entry):
-    """Test discount_percentage=100 zeroes out cost statistics."""
+async def test_cost_discounted_statistic_full_discount(recorder_mock, hass, mock_config_entry):
+    """Test 100% discount zeroes out _cost_discounted while _cost stays gross."""
     mock_config_entry.add_to_hass(hass)
     hass.config_entries.async_update_entry(
         mock_config_entry,
@@ -557,14 +559,17 @@ async def test_cost_statistics_with_discount_full(recorder_mock, hass, mock_conf
         hass,
         start,
         end,
-        {STAT_ID_COST},
+        {STAT_ID_COST, STAT_ID_COST_DISCOUNTED},
         "hour",
         None,
         {"sum", "state"},
     )
     assert STAT_ID_COST in stats
-    last_sum = stats[STAT_ID_COST][-1]["sum"]
-    assert abs(last_sum - 0.0) < 0.01  # 100% discount = zero cost
+    assert STAT_ID_COST_DISCOUNTED in stats
+
+    gross_total = sum(dp["cost"] for dp in datapoints)
+    assert abs(stats[STAT_ID_COST][-1]["sum"] - gross_total) < 0.01
+    assert abs(stats[STAT_ID_COST_DISCOUNTED][-1]["sum"] - 0.0) < 0.01
 
 
 async def test_consumption_unaffected_by_discount(recorder_mock, hass, mock_config_entry):
@@ -1739,6 +1744,70 @@ async def test_per_tariff_cost_statistics_created(recorder_mock, hass, mock_conf
         )
         assert stat_id in stats
         assert len(stats[stat_id]) == 24
+
+
+async def test_per_tariff_cost_discounted_statistics_created(recorder_mock, hass, mock_config_entry):
+    """Per-tariff cost_discounted stats are created when discount is configured."""
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        data={**mock_config_entry.data, "discount_percentage": 20},
+    )
+
+    off_peak = make_datapoints(1, base_ts=1774224000, tariff_bucket="off_peak")
+    on_peak = make_datapoints(1, base_ts=1774224000 + 86400, tariff_bucket="on_peak")
+    mixed = off_peak + on_peak
+
+    with (
+        patch(
+            "custom_components.electric_ireland_insights.coordinator.get_last_statistics",
+            return_value={},
+        ),
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI") as mock_api_class,
+        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
+    ):
+        mock_api_instance = AsyncMock()
+        _setup_api_mock(
+            mock_api_instance,
+            hourly_side_effect=[mixed] + [[] for _ in range(50)],
+        )
+        mock_api_class.return_value = mock_api_instance
+
+        from custom_components.electric_ireland_insights.coordinator import (
+            ElectricIrelandCoordinator,
+        )
+
+        coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
+        await coordinator._async_update_data()
+
+    await async_wait_recording_done(hass)
+
+    start = datetime(2026, 3, 23, 0, 0, tzinfo=UTC)
+    end = datetime(2026, 3, 25, 0, 0, tzinfo=UTC)
+
+    cost_off = f"{DOMAIN}:{ACCOUNT}_cost_off_peak"
+    cost_off_discounted = f"{DOMAIN}:{ACCOUNT}_cost_off_peak_discounted"
+    cost_on = f"{DOMAIN}:{ACCOUNT}_cost_on_peak"
+    cost_on_discounted = f"{DOMAIN}:{ACCOUNT}_cost_on_peak_discounted"
+
+    for gross_id, discounted_id in ((cost_off, cost_off_discounted), (cost_on, cost_on_discounted)):
+        stats = await get_instance(hass).async_add_executor_job(
+            statistics_during_period,
+            hass,
+            start,
+            end,
+            {gross_id, discounted_id},
+            "hour",
+            None,
+            {"sum"},
+        )
+        assert gross_id in stats
+        assert discounted_id in stats
+        assert len(stats[gross_id]) == 24
+        assert len(stats[discounted_id]) == 24
+        gross_sum = stats[gross_id][-1]["sum"]
+        discounted_sum = stats[discounted_id][-1]["sum"]
+        assert abs(discounted_sum - gross_sum * 0.8) < 0.01
 
 
 async def test_flat_rate_only_skips_per_tariff_stats(recorder_mock, hass, mock_config_entry):

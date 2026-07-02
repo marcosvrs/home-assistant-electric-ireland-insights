@@ -38,12 +38,13 @@ data with 1-3 days delay; the integration polls **every 3 hours** and ingests an
 install, it fetches up to 30 days of history; subsequent polls look back 4 days to pick up newly published readings.
 Full historical data (typically 6–13 months) can be imported on demand via the **Import full history** option during setup or reconfiguration.
 
-### Why not applying the 30% Off DD discount?
+### How does the discount percentage work?
 
-This is tariff-dependant. The Electric Ireland API reports cost as per tariff price (24h, smart, etc.), so in case some
-tariff does not offer the 30% Off Direct Debit, this integration will apply a transformation incorrect for the user.
+The Electric Ireland API reports **gross** cost as per tariff price (with VAT). If your plan includes a discount (for example, the 20% Saver discount or 30% Off Direct Debit), you can enter your discount percentage during setup or reconfiguration.
 
-So, in summary: Cost reports gross usage cost with VAT, without discount but also without standing charge or levy.
+The integration always keeps the `_cost` statistic as the **gross** amount imported from the portal. When a discount percentage is configured, it also creates a separate `_cost_discounted` statistic with the discount applied. Use `_cost_discounted` in the Energy Dashboard if you want cost tracking that matches your billed amount more closely.
+
+Standing charges and levies are not included in either cost statistic because Electric Ireland does not expose them in the Insights portal.
 
 ## Technical Details
 
@@ -56,9 +57,10 @@ This integration imports external statistics directly into the HA recorder — n
 | Statistic ID | Description | Unit |
 |---|---|---|
 | `electric_ireland_insights:{account}_consumption` | Hourly electricity consumption (total) | kWh |
-| `electric_ireland_insights:{account}_cost` | Hourly electricity cost (gross, with VAT, no discounts or standing charge) | EUR |
+| `electric_ireland_insights:{account}_cost` | Hourly electricity cost (gross, with VAT, no standing charge) | EUR |
+| `electric_ireland_insights:{account}_cost_discounted` | Hourly electricity cost with your configured discount applied (only created when discount > 0) | EUR |
 
-Add these under **Settings → Energy → Grid consumption**.
+Add the consumption and whichever cost statistic you prefer under **Settings → Energy → Grid consumption**. Use `_cost_discounted` if you want the Energy Dashboard to reflect your plan discount.
 
 #### Per-tariff breakdown (smart meter accounts)
 
@@ -70,10 +72,14 @@ For accounts on a time-of-use tariff, the integration also imports separate stat
 | `electric_ireland_insights:{account}_consumption_mid_peak` | Mid-peak consumption | kWh |
 | `electric_ireland_insights:{account}_consumption_on_peak` | On-peak consumption | kWh |
 | `electric_ireland_insights:{account}_consumption_flat_rate` | Flat-rate consumption during tariff transition periods | kWh |
-| `electric_ireland_insights:{account}_cost_off_peak` | Off-peak cost | EUR |
-| `electric_ireland_insights:{account}_cost_mid_peak` | Mid-peak cost | EUR |
-| `electric_ireland_insights:{account}_cost_on_peak` | On-peak cost | EUR |
-| `electric_ireland_insights:{account}_cost_flat_rate` | Flat-rate cost during tariff transition periods | EUR |
+| `electric_ireland_insights:{account}_cost_off_peak` | Off-peak cost (gross) | EUR |
+| `electric_ireland_insights:{account}_cost_mid_peak` | Mid-peak cost (gross) | EUR |
+| `electric_ireland_insights:{account}_cost_on_peak` | On-peak cost (gross) | EUR |
+| `electric_ireland_insights:{account}_cost_flat_rate` | Flat-rate cost during tariff transition periods (gross) | EUR |
+| `electric_ireland_insights:{account}_cost_off_peak_discounted` | Off-peak cost with discount applied (only created when discount > 0) | EUR |
+| `electric_ireland_insights:{account}_cost_mid_peak_discounted` | Mid-peak cost with discount applied (only created when discount > 0) | EUR |
+| `electric_ireland_insights:{account}_cost_on_peak_discounted` | On-peak cost with discount applied (only created when discount > 0) | EUR |
+| `electric_ireland_insights:{account}_cost_flat_rate_discounted` | Flat-rate cost with discount applied (only created when discount > 0) | EUR |
 
 Pure flat-rate accounts only have the aggregate statistics above. Accounts with smart tariff history that temporarily switch to flat rate during a contract change also get `_flat_rate` per-tariff statistics for that transition period. See [docs/index.md](docs/index.md) for detailed setup instructions.
 
@@ -131,7 +137,7 @@ This is a **major architectural change**. If you are upgrading from v0.2.x:
 ## Known Limitations
 
 * **1-3 day data delay**: Hourly meter readings are published by ESB with a 1-3 day delay. This integration cannot fetch data faster than ESB publishes it.
-* **Discount applies to future data only by default**: Changing the discount percentage affects only newly fetched or re-fetched data (the last 4 days on each poll). To recalculate all historical cost data with a new discount, use **Reconfigure → Import full history** after changing the discount. Standing charges and levies are never included.
+* **Discount applies to future `_cost_discounted` data only by default**: Changing the discount percentage affects only newly fetched or re-fetched `_cost_discounted` data (the last 4 days on each poll). The `_cost` statistic always remains gross. To recalculate all historical `_cost_discounted` data with a new discount, use **Reconfigure → Import full history** after changing the discount. Standing charges and levies are never included.
 * **Scraping dependency**: The integration authenticates via the Electric Ireland web portal. Changes to the portal's HTML structure may break the login flow until the integration is updated.
 
 ## Acknowledgements

@@ -61,7 +61,9 @@ After setup, add the imported statistics to the Energy Dashboard:
 1. Go to **Settings → Dashboards → Energy**.
 2. Under **Grid consumption**, click **Add consumption**.
 3. Search for and select `Electric Ireland Consumption ({account})`.
-4. For **Use an entity tracking the total costs**, select `Electric Ireland Cost ({account})`.
+4. For **Use an entity tracking the total costs**, select:
+   - `Electric Ireland Cost ({account})` for the gross cost as reported by Electric Ireland, or
+   - `Electric Ireland Cost Discounted ({account})` if you configured a discount percentage and want the cost to reflect your billed amount more closely.
 
 For per-tariff breakdown (stacked colored bars by time-of-use), see the [per-tariff setup](#setting-up-the-energy-dashboard-with-per-tariff-breakdown) section below.
 
@@ -93,7 +95,8 @@ The integration imports data as **external statistics** directly into the HA rec
 | Statistic ID | Description | Unit |
 |---|---|---|
 | `electric_ireland_insights:{account}_consumption` | Hourly electricity consumption (total) | kWh |
-| `electric_ireland_insights:{account}_cost` | Hourly electricity cost (total, gross with VAT, no discounts or standing charge) | EUR |
+| `electric_ireland_insights:{account}_cost` | Hourly electricity cost (gross with VAT, no standing charge) | EUR |
+| `electric_ireland_insights:{account}_cost_discounted` | Hourly electricity cost with your configured discount applied (only created when discount > 0) | EUR |
 
 ### Per-tariff breakdown
 
@@ -105,10 +108,14 @@ For smart meter accounts on a time-of-use tariff, the integration automatically 
 | `electric_ireland_insights:{account}_consumption_mid_peak` | Mid-peak consumption | kWh |
 | `electric_ireland_insights:{account}_consumption_on_peak` | On-peak consumption | kWh |
 | `electric_ireland_insights:{account}_consumption_flat_rate` | Flat-rate consumption during tariff transition periods | kWh |
-| `electric_ireland_insights:{account}_cost_off_peak` | Off-peak cost | EUR |
-| `electric_ireland_insights:{account}_cost_mid_peak` | Mid-peak cost | EUR |
-| `electric_ireland_insights:{account}_cost_on_peak` | On-peak cost | EUR |
-| `electric_ireland_insights:{account}_cost_flat_rate` | Flat-rate cost during tariff transition periods | EUR |
+| `electric_ireland_insights:{account}_cost_off_peak` | Off-peak cost (gross) | EUR |
+| `electric_ireland_insights:{account}_cost_mid_peak` | Mid-peak cost (gross) | EUR |
+| `electric_ireland_insights:{account}_cost_on_peak` | On-peak cost (gross) | EUR |
+| `electric_ireland_insights:{account}_cost_flat_rate` | Flat-rate cost during tariff transition periods (gross) | EUR |
+| `electric_ireland_insights:{account}_cost_off_peak_discounted` | Off-peak cost with discount applied (only created when discount > 0) | EUR |
+| `electric_ireland_insights:{account}_cost_mid_peak_discounted` | Mid-peak cost with discount applied (only created when discount > 0) | EUR |
+| `electric_ireland_insights:{account}_cost_on_peak_discounted` | On-peak cost with discount applied (only created when discount > 0) | EUR |
+| `electric_ireland_insights:{account}_cost_flat_rate_discounted` | Flat-rate cost with discount applied (only created when discount > 0) | EUR |
 
 - If you're on a **flat-rate** tariff (single bucket), per-tariff statistics are not created (they would be identical to the totals).
 - If only one non-flat bucket appears (e.g., off-peak only), per-tariff statistics are still created.
@@ -122,7 +129,7 @@ To see stacked colored bars showing consumption broken down by tariff:
 1. Go to **Settings → Dashboards → Energy**.
 2. Under **Grid consumption**, click **Add consumption**.
 3. Search for and add each per-tariff consumption statistic that the integration created for your account. The available tariff buckets depend on your plan and may include off-peak, mid-peak, on-peak, or flat-rate.
-4. For each consumption statistic, select the matching cost statistic (e.g., `Electric Ireland Cost Off-Peak ({account})` for the off-peak consumption entry).
+4. For each consumption statistic, select the matching cost statistic (e.g., `Electric Ireland Cost Off-Peak ({account})` for the off-peak consumption entry). If you configured a discount, use the `_discounted` cost statistic (e.g., `Electric Ireland Cost Off-Peak Discounted ({account})`) to match your billed amount more closely.
 5. **Remove** the original aggregate `Electric Ireland Consumption ({account})` entry to avoid double-counting.
 
 The Energy Dashboard will now display separate colored bars per hour/day for each tariff bucket.
@@ -149,7 +156,7 @@ To update your password or troubleshoot data import issues, use **Settings → D
 | **Password** | Re-enter your current password (required to re-authenticate the session, even if unchanged) |
 | **Re-discover meter IDs** | Clears the cached meter identifiers (partner, contract, premise) and forces the integration to re-discover them from the Electric Ireland portal on the next refresh. Use this when data imports have stopped but your credentials are still valid — typically caused by Electric Ireland changing internal account identifiers after a meter swap or account migration. |
 | **Import full history** | Fetches all available historical data from your bill periods (typically 6–13 months). Runs as a background task without blocking Home Assistant. Only needed once — subsequent polls keep data current automatically. |
-| **Discount percentage** | Your electricity plan discount (e.g., 20 for 20% Saver). Applied to hourly cost values going forward. To also recalculate existing cost data with the new discount, select **Import full history** after changing the discount. |
+| **Discount percentage** | Your electricity plan discount (e.g., 20 for 20% Saver). Creates a separate `_cost_discounted` statistic with the discount applied. To also recalculate existing `_cost_discounted` data with the new discount, select **Import full history** after changing the discount. The `_cost` statistic always remains gross. |
 
 If the password has changed, cached meter IDs are cleared automatically — you don't need to check the re-discovery option.
 
@@ -208,7 +215,7 @@ automation:
 ## Known limitations
 
 - **1–3 day data delay**: Hourly readings are published by ESB with a delay; the integration cannot fetch data faster than ESB publishes it.
-- **Discount applies to future data only by default**: Changing the discount percentage affects only newly fetched or re-fetched data (the last 4 days on each poll). To recalculate all historical cost data with a new discount, use **Reconfigure → Import full history** after changing the discount. Standing charges and levies are never included.
+- **Discount applies to future data only by default**: Changing the discount percentage affects only newly fetched or re-fetched `_cost_discounted` data (the last 4 days on each poll). To recalculate all historical `_cost_discounted` data with a new discount, use **Reconfigure → Import full history** after changing the discount. The `_cost` statistic always remains gross. Standing charges and levies are never included.
 - **Scraping dependency**: The integration authenticates via the Electric Ireland web portal. Changes to the portal's HTML structure may break the login flow until the integration is updated.
 - **Single account per entry**: Each config entry supports one electricity account. To monitor multiple accounts, add the integration once per account.
 
