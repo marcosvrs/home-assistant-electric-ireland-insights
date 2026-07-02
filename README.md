@@ -1,7 +1,9 @@
 # Home Assistant Electric Ireland Integration
 
-[![Open Integration](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=barreeeiroo&repository=Home-Assistant-Electric-Ireland&category=integration)
+[![Open Integration](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=marcosvrs&repository=home-assistant-electric-ireland-insights&category=integration)
 
+> **Origin & Attribution**: This integration is a continuation of the foundational work by [**@barreeeiroo**](https://github.com/barreeeiroo) and his original [Home-Assistant-Electric-Ireland](https://github.com/barreeeiroo/Home-Assistant-Electric-Ireland) project. The v0.4.0 rewrite builds on that codebase with a Platinum-tier architecture, external statistics, and per-tariff Energy Dashboard support. We gratefully acknowledge his pioneering effort that made this integration possible.
+>
 > **Disclaimer**: This is an independent, community-built integration. It is **not affiliated with, authorized by, or endorsed by** Electric Ireland, ESB Group, or any of their subsidiaries. "Electric Ireland" is a registered trademark of Electric Ireland Ltd.
 >
 > This integration works by scraping the Electric Ireland web portal — **there is no official API**. Changes to the website may break this integration at any time without notice. Users are solely responsible for ensuring their use complies with Electric Ireland's terms of service and applicable laws.
@@ -134,5 +136,5 @@ This is a **major architectural change**. If you are upgrading from v0.2.x:
 
 ## Acknowledgements
 
-* [**@barreeeiroo**](https://github.com/barreeeiroo): Original author of this integration. This project is a fork of [barreeeiroo/Home-Assistant-Electric-Ireland](https://github.com/barreeeiroo/Home-Assistant-Electric-Ireland) — his foundational work made this continuation possible.
+* [**@barreeeiroo**](https://github.com/barreeeiroo) — Original author and creator of the Electric Ireland Home Assistant integration. This project began as a fork of [barreeeiroo/Home-Assistant-Electric-Ireland](https://github.com/barreeeiroo/Home-Assistant-Electric-Ireland) and his original vision, design, and effort made every subsequent improvement possible. We honor and thank him for building the foundation that the community now continues to evolve.
 * [Opower integration](https://github.com/home-assistant/core/tree/dev/homeassistant/components/opower): served as the architectural reference for the external statistics and coordinator pattern used in v0.4.0.

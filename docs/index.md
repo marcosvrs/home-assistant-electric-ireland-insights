@@ -8,6 +8,7 @@ ha_iot_class: Cloud Polling
 ha_config_flow: true
 ha_codeowners:
   - "@barreeeiroo"
+  - "@marcosvrs"
 ha_domain: electric_ireland_insights
 ha_platforms:
   - diagnostics
@@ -20,7 +21,7 @@ ha_quality_scale: platinum
 
 [Electric Ireland](https://www.electricireland.ie/) is an Irish electricity and gas supplier. The Electric Ireland Insights integration imports hourly energy consumption and cost data from the Electric Ireland Insights portal directly into the Home Assistant Energy Dashboard as external statistics.
 
-> **Note**: This is an independent, community-built integration. It is not affiliated with, authorized by, or endorsed by Electric Ireland, ESB Group, or any of their subsidiaries. This integration works by scraping the Electric Ireland web portal — there is no official API. Changes to the website may break this integration at any time without notice. Users are solely responsible for ensuring their use complies with Electric Ireland's terms of service and applicable laws. The authors accept no responsibility for any consequences arising from its use, including account restrictions or legal action. All data remains on the user's local Home Assistant instance. See [LEGAL.md](https://github.com/barreeeiroo/Home-Assistant-Electric-Ireland/blob/master/LEGAL.md) for full details.
+> **Note**: This is an independent, community-built integration. It is not affiliated with, authorized by, or endorsed by Electric Ireland, ESB Group, or any of their subsidiaries. This integration works by scraping the Electric Ireland web portal — there is no official API. Changes to the website may break this integration at any time without notice. Users are solely responsible for ensuring their use complies with Electric Ireland's terms of service and applicable laws. The authors accept no responsibility for any consequences arising from its use, including account restrictions or legal action. All data remains on the user's local Home Assistant instance. See [LEGAL.md](https://github.com/marcosvrs/home-assistant-electric-ireland-insights/blob/master/LEGAL.md) for full details.
 
 ## Prerequisites
 

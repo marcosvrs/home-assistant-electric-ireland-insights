@@ -15,7 +15,7 @@ This integration does **not** operate any external server, cloud service, or dat
 If you discover a security vulnerability in this integration, please report it responsibly:
 
 1. **Do NOT** open a public GitHub issue
-2. Email the maintainers or use [GitHub's private vulnerability reporting](https://github.com/barreeeiroo/Home-Assistant-Electric-Ireland/security/advisories/new)
+2. Email the maintainers or use [GitHub's private vulnerability reporting](https://github.com/marcosvrs/home-assistant-electric-ireland-insights/security/advisories/new)
 
 ## Best practices for users
 

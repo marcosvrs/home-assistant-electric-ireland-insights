@@ -1,13 +1,13 @@
 {
   "domain": "electric_ireland_insights",
   "name": "Electric Ireland Insights (Unofficial)",
-  "codeowners": ["@barreeeiroo"],
+  "codeowners": ["@barreeeiroo", "@marcosvrs"],
   "config_flow": true,
   "dependencies": ["recorder"],
-  "documentation": "https://github.com/barreeeiroo/Home-Assistant-Electric-Ireland",
+  "documentation": "https://github.com/marcosvrs/home-assistant-electric-ireland-insights",
   "integration_type": "service",
   "iot_class": "cloud_polling",
-  "issue_tracker": "https://github.com/barreeeiroo/Home-Assistant-Electric-Ireland/issues",
+  "issue_tracker": "https://github.com/marcosvrs/home-assistant-electric-ireland-insights/issues",
   "loggers": ["electric_ireland_insights"],
   "requirements": [
     "beautifulsoup4~=4.14.3"
