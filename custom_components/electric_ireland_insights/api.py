@@ -6,22 +6,13 @@ from datetime import UTC, date, datetime, time
 import aiohttp
 from bs4 import BeautifulSoup, Tag
 
-from .const import TARIFF_BUCKET_MAP
+from .const import TARIFF_BUCKET_MAP, _redact_id
 from .exceptions import AccountNotFound, CachedIdsInvalid, CannotConnect, InvalidAuth
 from .types import BillPeriod, ElectricIrelandDatapoint, MeterIds
 
 _LOGGER = logging.getLogger(__name__)
 
 BASE_URL = "https://youraccountonline.electricireland.ie"
-
-
-def _redact_id(value: str | None, visible: int = 4) -> str:
-    """Return a redacted identifier for safe logging."""
-    if not value:
-        return "<empty>"
-    if len(value) <= visible:
-        return "*" * len(value)
-    return f"{'*' * (len(value) - visible)}{value[-visible:]}"
 
 
 class ElectricIrelandAPI:
@@ -75,7 +66,11 @@ class ElectricIrelandAPI:
             res2.raise_for_status()
             html2 = await res2.text()
 
-        return BeautifulSoup(html2, "html.parser")
+        soup2 = BeautifulSoup(html2, "html.parser")
+        if soup2.find("div", class_="validation-summary-errors"):
+            raise InvalidAuth("Invalid username or password")
+
+        return soup2
 
     async def discover_accounts(self, session: aiohttp.ClientSession) -> list[dict[str, str]]:
         """Scrape the post-login page and return all electricity account numbers.
@@ -89,8 +84,8 @@ class ElectricIrelandAPI:
         except (CannotConnect, AccountNotFound):
             raise
         except aiohttp.ClientError as err:
-            _LOGGER.debug("Account discovery failed: %s", err)
-            raise CannotConnect(str(err)) from err
+            _LOGGER.debug("Account discovery failed: %s", type(err).__name__)
+            raise CannotConnect("Connection failed during account discovery") from err
         except TimeoutError as err:
             _LOGGER.debug("Account discovery timed out")
             raise CannotConnect("Connection timed out") from err
@@ -183,8 +178,8 @@ class ElectricIrelandAPI:
         except CannotConnect:
             raise
         except aiohttp.ClientError as err:
-            _LOGGER.debug("Bill periods request failed: %s", err)
-            raise CannotConnect(str(err)) from err
+            _LOGGER.debug("Bill periods request failed: %s", type(err).__name__)
+            raise CannotConnect("Connection failed while fetching bill periods") from err
         except TimeoutError as err:
             _LOGGER.debug("Bill periods request timed out")
             raise CannotConnect("Connection timed out") from err
@@ -244,7 +239,7 @@ class ElectricIrelandAPI:
                 break
 
             if not target_account:
-                raise AccountNotFound(f"Account {self._account_number} not found")
+                raise AccountNotFound("Account not found")
 
             _LOGGER.debug("Navigating to Insights page...")
             event_form = target_account.find("form", {"action": "/Accounts/OnEvent"})
@@ -309,8 +304,8 @@ class ElectricIrelandAPI:
         except (InvalidAuth, CannotConnect, AccountNotFound):
             raise
         except aiohttp.ClientError as err:
-            _LOGGER.debug("Login failed: %s", err)
-            raise CannotConnect(str(err)) from err
+            _LOGGER.debug("Login failed: %s", type(err).__name__)
+            raise CannotConnect("Connection failed during login") from err
         except TimeoutError as err:
             _LOGGER.debug("Login timed out")
             raise CannotConnect("Connection timed out") from err
@@ -352,15 +347,15 @@ class MeterInsightClient:
                 try:
                     data = await response.json()
                 except Exception as err:
-                    raise CannotConnect(f"Failed to parse hourly usage JSON: {err}") from err
+                    raise CannotConnect(f"Failed to parse hourly usage JSON for {date_str}") from err
 
         except CachedIdsInvalid:
             raise
         except CannotConnect:
             raise
         except aiohttp.ClientError as err:
-            _LOGGER.debug("Hourly usage request failed for %s: %s", date_str, err)
-            raise CannotConnect(f"Failed to fetch hourly usage: {err}") from err
+            _LOGGER.debug("Hourly usage request failed for %s: %s", date_str, type(err).__name__)
+            raise CannotConnect(f"Failed to fetch hourly usage for {date_str}") from err
         except TimeoutError as err:
             _LOGGER.debug("Hourly usage request timed out for %s", date_str)
             raise CannotConnect("Connection timed out") from err
@@ -376,16 +371,16 @@ class MeterInsightClient:
         usage_tariff_keys = ("offPeak", "midPeak", "onPeak", "flatRate")
 
         for dp in raw_datapoints:
-            end_date_str = dp.get("endDate")
+            start_date_str = dp.get("startDate") or dp.get("endDate")
 
-            if not end_date_str:
+            if not start_date_str:
                 continue
 
             try:
-                end_dt = datetime.fromisoformat(end_date_str.replace("Z", "+00:00"))
-                interval_end = int(end_dt.timestamp())
+                start_dt = datetime.fromisoformat(start_date_str.replace("Z", "+00:00"))
+                start = int(start_dt.timestamp())
             except (ValueError, AttributeError) as err:
-                _LOGGER.warning("Failed to parse date %s: %s", end_date_str, err)
+                _LOGGER.warning("Failed to parse date %s: %s", start_date_str, err)
                 continue
 
             present_keys = [k for k in usage_tariff_keys if dp.get(k) is not None]
@@ -394,7 +389,7 @@ class MeterInsightClient:
             if len(present_keys) > 1:
                 _LOGGER.debug(
                     "Multiple tariff keys present for %s: %s (using %s)",
-                    end_date_str,
+                    start_date_str,
                     present_keys,
                     active_key,
                 )
@@ -405,7 +400,7 @@ class MeterInsightClient:
                     {
                         "consumption": usage_entry.get("consumption"),
                         "cost": usage_entry.get("cost"),
-                        "intervalEnd": interval_end,
+                        "start": start,
                         "tariff_bucket": TARIFF_BUCKET_MAP.get(active_key, active_key),
                     }
                 )
