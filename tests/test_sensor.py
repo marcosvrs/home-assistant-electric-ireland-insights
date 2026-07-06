@@ -4,13 +4,18 @@
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
+from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.const import EntityCategory
 
+from custom_components.electric_ireland_insights.const import hash_account_id
 from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
 from custom_components.electric_ireland_insights.sensor import (
     DIAGNOSTIC_SENSORS,
     ElectricIrelandDiagnosticSensor,
 )
+
+ACCOUNT = "100000001"
+ACCOUNT_HASH = hash_account_id(ACCOUNT)
 
 
 async def test_diagnostic_entities_created(hass, enable_custom_integrations, mock_config_entry):
@@ -43,7 +48,7 @@ async def test_last_import_time_value(hass, enable_custom_integrations, mock_con
     mock_coordinator.config_entry = mock_config_entry
 
     last_import_desc = next(d for d in DIAGNOSTIC_SENSORS if d.key == "last_import_time")
-    sensor = ElectricIrelandDiagnosticSensor(mock_coordinator, last_import_desc, "100000001")
+    sensor = ElectricIrelandDiagnosticSensor(mock_coordinator, last_import_desc, ACCOUNT, ACCOUNT_HASH)
     assert sensor.native_value == expected_ts
 
 
@@ -63,7 +68,7 @@ async def test_data_freshness_returns_none_when_no_timestamp(hass, enable_custom
     mock_coordinator.config_entry = mock_config_entry
 
     freshness_desc = next(d for d in DIAGNOSTIC_SENSORS if d.key == "data_freshness_days")
-    sensor = ElectricIrelandDiagnosticSensor(mock_coordinator, freshness_desc, "100000001")
+    sensor = ElectricIrelandDiagnosticSensor(mock_coordinator, freshness_desc, ACCOUNT, ACCOUNT_HASH)
     assert sensor.native_value is None
 
 
@@ -75,7 +80,7 @@ async def test_native_value_none_when_coordinator_data_none(hass, enable_custom_
     mock_coordinator.config_entry = mock_config_entry
 
     last_import_desc = next(d for d in DIAGNOSTIC_SENSORS if d.key == "last_import_time")
-    sensor = ElectricIrelandDiagnosticSensor(mock_coordinator, last_import_desc, "100000001")
+    sensor = ElectricIrelandDiagnosticSensor(mock_coordinator, last_import_desc, ACCOUNT, ACCOUNT_HASH)
     assert sensor.native_value is None
 
 
@@ -94,8 +99,16 @@ async def test_unique_id_format(hass, enable_custom_integrations, mock_config_en
     mock_coordinator.config_entry = mock_config_entry
 
     last_import_desc = next(d for d in DIAGNOSTIC_SENSORS if d.key == "last_import_time")
-    sensor = ElectricIrelandDiagnosticSensor(mock_coordinator, last_import_desc, "100000001")
-    assert sensor.unique_id == "electric_ireland_insights_100000001_last_import_time"
+    sensor = ElectricIrelandDiagnosticSensor(mock_coordinator, last_import_desc, ACCOUNT, ACCOUNT_HASH)
+    assert sensor.unique_id == f"electric_ireland_insights_{ACCOUNT_HASH}_last_import_time"
+
+
+async def test_device_classes(hass, enable_custom_integrations, mock_config_entry):
+    """Diagnostic sensors declare appropriate device classes."""
+    last_import_desc = next(d for d in DIAGNOSTIC_SENSORS if d.key == "last_import_time")
+    freshness_desc = next(d for d in DIAGNOSTIC_SENSORS if d.key == "data_freshness_days")
+    assert last_import_desc.device_class == SensorDeviceClass.TIMESTAMP
+    assert freshness_desc.device_class == SensorDeviceClass.DURATION
 
 
 async def test_device_info_has_account(hass, enable_custom_integrations, mock_config_entry):
@@ -113,10 +126,13 @@ async def test_device_info_has_account(hass, enable_custom_integrations, mock_co
     mock_coordinator.config_entry = mock_config_entry
 
     last_import_desc = next(d for d in DIAGNOSTIC_SENSORS if d.key == "last_import_time")
-    sensor = ElectricIrelandDiagnosticSensor(mock_coordinator, last_import_desc, "100000001")
-    assert ("electric_ireland_insights", "100000001") in sensor.device_info["identifiers"]
+    sensor = ElectricIrelandDiagnosticSensor(mock_coordinator, last_import_desc, ACCOUNT, ACCOUNT_HASH)
+    assert ("electric_ireland_insights", ACCOUNT_HASH) in sensor.device_info["identifiers"]
     assert sensor.device_info["manufacturer"] == "Electric Ireland"
     assert sensor.device_info["model"] == "Insights Portal"
+    assert sensor.device_info["serial_number"] == ACCOUNT_HASH
+    assert sensor.device_info["hw_version"] == "Portal"
+    assert sensor.device_info["sw_version"] == "1.0.0"
 
 
 async def test_has_entity_name_is_true(hass, enable_custom_integrations, mock_config_entry):
@@ -134,7 +150,7 @@ async def test_has_entity_name_is_true(hass, enable_custom_integrations, mock_co
     mock_coordinator.config_entry = mock_config_entry
 
     last_import_desc = next(d for d in DIAGNOSTIC_SENSORS if d.key == "last_import_time")
-    sensor = ElectricIrelandDiagnosticSensor(mock_coordinator, last_import_desc, "100000001")
+    sensor = ElectricIrelandDiagnosticSensor(mock_coordinator, last_import_desc, ACCOUNT, ACCOUNT_HASH)
     assert sensor._attr_has_entity_name is True
 
 
@@ -156,7 +172,7 @@ async def test_data_freshness_with_valid_timestamp(hass, enable_custom_integrati
     mock_coordinator.config_entry = mock_config_entry
 
     freshness_desc = next(d for d in DIAGNOSTIC_SENSORS if d.key == "data_freshness_days")
-    sensor = ElectricIrelandDiagnosticSensor(mock_coordinator, freshness_desc, "100000001")
+    sensor = ElectricIrelandDiagnosticSensor(mock_coordinator, freshness_desc, ACCOUNT, ACCOUNT_HASH)
 
     from unittest.mock import patch as _patch
 

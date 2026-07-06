@@ -20,7 +20,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util.dt import utcnow
 
 from . import ElectricIrelandConfigEntry
-from .const import DOMAIN
+from .const import DOMAIN, VERSION, _redact_id, hash_account_id
 from .coordinator import ElectricIrelandCoordinator
 from .types import CoordinatorData
 
@@ -45,6 +45,7 @@ DIAGNOSTIC_SENSORS: tuple[ElectricIrelandSensorDescription, ...] = (
     ElectricIrelandSensorDescription(
         key="data_freshness_days",
         translation_key="data_freshness_days",
+        device_class=SensorDeviceClass.DURATION,
         entity_category=EntityCategory.DIAGNOSTIC,
         native_unit_of_measurement="days",
         value_fn=lambda data: _calc_freshness(data),
@@ -68,13 +69,15 @@ async def async_setup_entry(
 ) -> None:
     coordinator = config_entry.runtime_data
     account = config_entry.data["account_number"]
+    account_hash = hash_account_id(account)
     _LOGGER.debug(
         "Setting up %d diagnostic sensor(s) for account=%s",
         len(DIAGNOSTIC_SENSORS),
-        account,
+        _redact_id(account),
     )
     async_add_entities(
-        ElectricIrelandDiagnosticSensor(coordinator, description, account) for description in DIAGNOSTIC_SENSORS
+        ElectricIrelandDiagnosticSensor(coordinator, description, account, account_hash)
+        for description in DIAGNOSTIC_SENSORS
     )
 
 
@@ -87,16 +90,20 @@ class ElectricIrelandDiagnosticSensor(CoordinatorEntity[ElectricIrelandCoordinat
         coordinator: ElectricIrelandCoordinator,
         description: ElectricIrelandSensorDescription,
         account_number: str,
+        account_hash: str,
     ) -> None:
         super().__init__(coordinator)
         self.entity_description = description
-        self._attr_unique_id = f"{DOMAIN}_{account_number}_{description.key}"
+        self._attr_unique_id = f"{DOMAIN}_{account_hash}_{description.key}"
         self._attr_entity_registry_enabled_default = False
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, account_number)},
+            identifiers={(DOMAIN, account_hash)},
             name=f"Electric Ireland Insights ({account_number})",
             manufacturer="Electric Ireland",
             model="Insights Portal",
+            serial_number=account_hash,
+            hw_version="Portal",
+            sw_version=VERSION,
             entry_type=DeviceEntryType.SERVICE,
         )
 
