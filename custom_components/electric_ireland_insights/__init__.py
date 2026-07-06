@@ -9,7 +9,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN
+from .const import DOMAIN, _redact_id
 from .coordinator import ElectricIrelandCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -21,26 +21,10 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 type ElectricIrelandConfigEntry = ConfigEntry[ElectricIrelandCoordinator]
 
 
-async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
-    _LOGGER.debug(
-        "Migrating Electric Ireland entry from version %s to 2",
-        config_entry.version,
-    )
-    if config_entry.version < 2:
-        new_data = {
-            **dict(config_entry.data),
-            "partner_id": None,
-            "contract_id": None,
-            "premise_id": None,
-        }
-        hass.config_entries.async_update_entry(config_entry, data=new_data, version=2)
-    return True
-
-
 async def async_setup_entry(hass: HomeAssistant, entry: ElectricIrelandConfigEntry) -> bool:
     _LOGGER.debug(
         "Setting up Electric Ireland entry, account=%s",
-        entry.data["account_number"],
+        _redact_id(entry.data["account_number"]),
     )
     coordinator = ElectricIrelandCoordinator(hass, entry)
 
@@ -51,10 +35,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ElectricIrelandConfigEnt
     entry.async_on_unload(coordinator.async_add_listener(lambda: None))
 
     import_full = entry.data.get("import_full_history", False)
-    if import_full:
-        new_data = {**dict(entry.data), "import_full_history": False}
-        hass.config_entries.async_update_entry(entry, data=new_data)
-
     needs_backfill = import_full or not entry.data.get("tariff_stats_initialized")
     if needs_backfill:
         entry.async_create_background_task(
@@ -65,7 +45,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ElectricIrelandConfigEnt
         _LOGGER.debug(
             "Launching %s backfill background task, account=%s",
             "full history" if import_full else "initial 30-day",
-            entry.data["account_number"],
+            _redact_id(entry.data["account_number"]),
         )
     else:
         _LOGGER.debug("No backfill needed, tariff_stats already initialized")
@@ -73,7 +53,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ElectricIrelandConfigEnt
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _LOGGER.debug(
         "Platforms forwarded for account=%s",
-        entry.data["account_number"],
+        _redact_id(entry.data["account_number"]),
     )
 
     return True
@@ -82,6 +62,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ElectricIrelandConfigEnt
 async def async_unload_entry(hass: HomeAssistant, entry: ElectricIrelandConfigEntry) -> bool:
     _LOGGER.debug(
         "Unloading Electric Ireland entry, account=%s",
-        entry.data["account_number"],
+        _redact_id(entry.data["account_number"]),
     )
+    await entry.runtime_data.async_close()
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
