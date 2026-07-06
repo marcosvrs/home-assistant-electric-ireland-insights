@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 from datetime import UTC, date, datetime, timedelta
 from functools import partial
 from typing import Literal
 
 import aiohttp
-from homeassistant.components.recorder import get_instance  # type: ignore[attr-defined]
 from homeassistant.components.recorder.models import StatisticData, StatisticMeanType, StatisticMetaData
 from homeassistant.components.recorder.statistics import (
     async_add_external_statistics,
@@ -21,12 +21,23 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.issue_registry import IssueSeverity, async_create_issue, async_delete_issue
+from homeassistant.helpers.recorder import get_instance
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util.dt import now as dt_now
 from homeassistant.util.dt import utcnow
 
 from .api import ElectricIrelandAPI
-from .const import DATA_GAP_THRESHOLD_DAYS, DOMAIN, INITIAL_LOOKBACK_DAYS, LOOKUP_DAYS, SCAN_INTERVAL
+from .const import (
+    CONF_DISCOUNT_PERCENTAGE,
+    DATA_GAP_THRESHOLD_DAYS,
+    DEFAULT_DISCOUNT_PERCENTAGE,
+    DOMAIN,
+    INITIAL_LOOKBACK_DAYS,
+    LOOKUP_DAYS,
+    SCAN_INTERVAL,
+    _redact_id,
+    hash_account_id,
+)
 from .exceptions import CachedIdsInvalid, CannotConnect, InvalidAuth
 from .types import (
     BillPeriod,
@@ -36,6 +47,14 @@ from .types import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+async def _close_session(session: aiohttp.ClientSession) -> None:
+    """Close an aiohttp session, tolerating non-awaitable test mocks."""
+    close_result = session.close()
+    if inspect.isawaitable(close_result):
+        await close_result
+
 
 TARIFF_BUCKET_MAP_DISPLAY: dict[str, str] = {
     "flat_rate": "Flat Rate",
@@ -58,6 +77,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
         )
         self._config_entry = config_entry
         self._account = config_entry.data["account_number"]
+        self._account_hash = hash_account_id(self._account)
         self._api = ElectricIrelandAPI(
             config_entry.data["username"],
             config_entry.data["password"],
@@ -77,7 +97,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                 async_create_issue(
                     self.hass,
                     DOMAIN,
-                    f"data_gap_{self._account}",
+                    f"data_gap_{self._account_hash}",
                     is_fixable=False,
                     severity=IssueSeverity.WARNING,
                     translation_key="data_gap",
@@ -86,9 +106,13 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                         "days": str(round(gap_days, 1)),
                     },
                 )
-                _LOGGER.debug("Created repair issue: data_gap_%s (%.1f days stale)", self._account, gap_days)
+                _LOGGER.debug(
+                    "Created repair issue: data_gap_%s (%.1f days stale)",
+                    _redact_id(self._account),
+                    gap_days,
+                )
             else:
-                async_delete_issue(self.hass, DOMAIN, f"data_gap_{self._account}")
+                async_delete_issue(self.hass, DOMAIN, f"data_gap_{self._account_hash}")
 
     async def _async_update_data(self) -> CoordinatorData:
         session = self._session
@@ -102,7 +126,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
             return result
 
         try:
-            stat_id = f"{DOMAIN}:{self._account}_consumption"
+            stat_id = f"{DOMAIN}:{self._account_hash}_consumption"
             statistic_types: set[Literal["last_reset", "max", "mean", "min", "state", "sum"]] = {"sum"}
             existing = await get_instance(self.hass).async_add_executor_job(
                 partial(get_last_statistics, self.hass, 1, stat_id, True, statistic_types)
@@ -145,7 +169,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                 self.hass.config_entries.async_update_entry(self._config_entry, data=new_data)
                 _LOGGER.debug(
                     "Updated cached meter IDs: partner=%s",
-                    discovered_ids["partner"],
+                    _redact_id(discovered_ids["partner"]),
                 )
 
             bill_period_stale = (
@@ -158,8 +182,8 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                     self._bill_periods_fetched_at = utcnow()
                 except CannotConnect:
                     _LOGGER.warning("Failed to fetch bill periods, falling back to full lookback window")
-                    if not self._bill_periods:
-                        self._bill_periods = []
+                    self._bill_periods = []
+                    self._bill_periods_fetched_at = None
 
             yesterday = (dt_now() - timedelta(days=1)).date()
             all_lookback_dates = {yesterday - timedelta(days=i) for i in range(lookback)}
@@ -254,26 +278,30 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
             await self._insert_statistics(
                 datapoints,
                 "consumption",
-                f"{DOMAIN}:{self._account}_consumption",
+                f"{DOMAIN}:{self._account_hash}_consumption",
                 UnitOfEnergy.KILO_WATT_HOUR,
             )
             await self._insert_statistics(
                 datapoints,
                 "cost",
-                f"{DOMAIN}:{self._account}_cost",
+                f"{DOMAIN}:{self._account_hash}_cost",
                 "EUR",
             )
-            discount = self._config_entry.data.get("discount_percentage", 0)
+            discount = self._config_entry.options.get(CONF_DISCOUNT_PERCENTAGE, DEFAULT_DISCOUNT_PERCENTAGE)
             if discount:
                 await self._insert_statistics(
                     datapoints,
                     "cost",
-                    f"{DOMAIN}:{self._account}_cost_discounted",
+                    f"{DOMAIN}:{self._account_hash}_cost_discounted",
                     "EUR",
                     name_override=f"Electric Ireland Cost Discounted ({self._account})",
                     discount=discount,
                 )
-            _LOGGER.debug("Imported %d aggregate datapoints for account=%s", len(datapoints), self._account)
+            _LOGGER.debug(
+                "Imported %d aggregate datapoints for account=%s",
+                len(datapoints),
+                _redact_id(self._account),
+            )
 
             buckets: dict[str, list[ElectricIrelandDatapoint]] = {}
             for dp in datapoints:
@@ -288,13 +316,13 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
             if await self._should_import_per_tariff_statistics(seen_buckets):
                 await self._insert_per_tariff_statistics(buckets, discount=discount)
 
-            last_ts = max((dp["intervalEnd"] for dp in datapoints), default=None)
+            last_ts = max((dp["start"] for dp in datapoints), default=None)
             latest_data_ts = datetime.fromtimestamp(last_ts, tz=UTC) if last_ts else None
 
             self.hass.bus.async_fire(
                 f"{DOMAIN}_data_imported",
                 {
-                    "account": self._account,
+                    "account": self._account_hash,
                     "datapoint_count": len(datapoints),
                     "latest_data_timestamp": latest_data_ts.isoformat() if latest_data_ts else None,
                     "tariff_buckets": sorted(seen_buckets),
@@ -321,23 +349,24 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
 
         except InvalidAuth as err:
             self._last_update_success = False
-            _LOGGER.error("Authentication failed: %s", err)
+            _LOGGER.error("Authentication failed")
             raise ConfigEntryAuthFailed from err
         except CannotConnect as err:
             if was_successful:
-                _LOGGER.warning(
-                    "Connection lost — data import paused: %s",
-                    err,
-                )
+                _LOGGER.warning("Connection lost — data import paused")
             self._last_update_success = False
-            raise UpdateFailed(f"Connection error: {err}") from err
+            raise UpdateFailed("Connection error") from err
         except (ConfigEntryAuthFailed, UpdateFailed):
             self._last_update_success = False
             raise
         except Exception as err:
             self._last_update_success = False
             _LOGGER.exception("Unexpected error during update")
-            raise UpdateFailed(f"Unexpected error: {err}") from err
+            raise UpdateFailed("Unexpected error") from err
+
+    async def async_close(self) -> None:
+        """Close the coordinator's aiohttp session."""
+        await _close_session(self._session)
 
     async def async_tariff_backfill(self, *, full_history: bool = False) -> None:
         """Background backfill of historical data.
@@ -357,12 +386,15 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                 raise ConfigEntryAuthFailed from err
 
             if full_history:
+                bill_periods = await self._api.get_bill_periods(session, meter_ids)
+                if not bill_periods:
+                    _LOGGER.warning("Full history requested but no bill periods available; will retry")
+                    return
+            else:
                 try:
                     bill_periods = await self._api.get_bill_periods(session, meter_ids)
                 except CannotConnect:
                     bill_periods = []
-            else:
-                bill_periods = []
 
             yesterday = (dt_now() - timedelta(days=1)).date()
 
@@ -401,21 +433,21 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                 await self._insert_statistics(
                     datapoints,
                     "consumption",
-                    f"{DOMAIN}:{self._account}_consumption",
+                    f"{DOMAIN}:{self._account_hash}_consumption",
                     UnitOfEnergy.KILO_WATT_HOUR,
                 )
                 await self._insert_statistics(
                     datapoints,
                     "cost",
-                    f"{DOMAIN}:{self._account}_cost",
+                    f"{DOMAIN}:{self._account_hash}_cost",
                     "EUR",
                 )
-                discount = self._config_entry.data.get("discount_percentage", 0)
+                discount = self._config_entry.options.get(CONF_DISCOUNT_PERCENTAGE, DEFAULT_DISCOUNT_PERCENTAGE)
                 if discount:
                     await self._insert_statistics(
                         datapoints,
                         "cost",
-                        f"{DOMAIN}:{self._account}_cost_discounted",
+                        f"{DOMAIN}:{self._account_hash}_cost_discounted",
                         "EUR",
                         name_override=f"Electric Ireland Cost Discounted ({self._account})",
                         discount=discount,
@@ -430,13 +462,20 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                     await self._insert_per_tariff_statistics(buckets, discount=discount)
 
             new_data = {**dict(self._config_entry.data), "tariff_stats_initialized": True}
+            if full_history:
+                new_data["import_full_history"] = False
             self.hass.config_entries.async_update_entry(self._config_entry, data=new_data)
             _LOGGER.info("Background backfill complete (%d datapoints)", len(datapoints))
 
         except (InvalidAuth, CannotConnect) as err:
-            _LOGGER.warning("Background backfill failed (will retry next restart): %s", err)
+            _LOGGER.warning(
+                "Background backfill failed (will retry next restart): %s",
+                type(err).__name__,
+            )
         except Exception:
             _LOGGER.exception("Unexpected error during background backfill")
+        finally:
+            await _close_session(session)
 
     async def _should_import_per_tariff_statistics(self, seen_buckets: set[str]) -> bool:
         return bool(seen_buckets - {"flat_rate"})
@@ -452,14 +491,14 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
             await self._insert_statistics(
                 bucket_dps,
                 "consumption",
-                f"{DOMAIN}:{self._account}_consumption_{bucket_name}",
+                f"{DOMAIN}:{self._account_hash}_consumption_{bucket_name}",
                 UnitOfEnergy.KILO_WATT_HOUR,
                 name_override=f"Electric Ireland Consumption {display} ({self._account})",
             )
             await self._insert_statistics(
                 bucket_dps,
                 "cost",
-                f"{DOMAIN}:{self._account}_cost_{bucket_name}",
+                f"{DOMAIN}:{self._account_hash}_cost_{bucket_name}",
                 "EUR",
                 name_override=f"Electric Ireland Cost {display} ({self._account})",
             )
@@ -467,7 +506,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                 await self._insert_statistics(
                     bucket_dps,
                     "cost",
-                    f"{DOMAIN}:{self._account}_cost_{bucket_name}_discounted",
+                    f"{DOMAIN}:{self._account_hash}_cost_{bucket_name}_discounted",
                     "EUR",
                     name_override=f"Electric Ireland Cost {display} Discounted ({self._account})",
                     discount=discount,
@@ -490,8 +529,8 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                 continue
             if metric == "cost" and discount:
                 value = float(value) * (1 - discount / 100)
-            interval_end = dp["intervalEnd"]
-            start = datetime.fromtimestamp(interval_end, tz=UTC).replace(minute=0, second=0, microsecond=0)
+            start_ts = dp["start"]
+            start = datetime.fromtimestamp(start_ts, tz=UTC).replace(minute=0, second=0, microsecond=0)
             filtered.append((start, float(value)))
 
         if not filtered:
@@ -505,7 +544,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
             partial(
                 statistics_during_period,
                 self.hass,
-                overlap_start - timedelta(days=INITIAL_LOOKBACK_DAYS),
+                datetime(1970, 1, 1, tzinfo=UTC),
                 overlap_start,
                 {statistic_id},
                 "hour",
