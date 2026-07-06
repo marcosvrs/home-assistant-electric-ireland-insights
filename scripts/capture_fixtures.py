@@ -30,6 +30,8 @@ ANON_PREMISE = "PREMISE_001"
 # Placeholder for EF-* encrypted navigation tokens (session-specific, no real data)
 ANON_EF_TOKEN = "ANON_EF_TOKEN_PLACEHOLDER_0000000000000000000000000000"  # noqa: S105
 ANON_EF_TOKEN_URL = "ANON_EF_TOKEN_URL_PLACEHOLDER_0000000000000000000000000000"  # noqa: S105
+# Placeholder for ASP.NET Core anti-forgery request-verification token
+ANON_RVT_TOKEN = "ANON_RVT_TOKEN_PLACEHOLDER_0000000000000000000000000000"  # noqa: S105
 # Anonymized tariff plan name (replaces real product names like "Home Electric+ Weekender")
 ANON_TARIFF_PLAN = "TestPlan"
 ANON_ADDRESS = "123 SAMPLE STREET, DUBLIN"
@@ -37,7 +39,7 @@ ANON_ADDRESS = "123 SAMPLE STREET, DUBLIN"
 EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 NINE_DIGIT_RE = re.compile(r"\b\d{9}\b")
 PII_KEYS = {"account", "accountNumber", "email", "partner", "contract", "premise", "addressLines", "accountAddress"}
-DATE_KEYS = {"date", "endDate", "startDate", "timestamp", "intervalEnd"}
+DATE_KEYS = {"date", "endDate", "startDate", "timestamp"}
 
 LOGGER = logging.getLogger("capture_fixtures")
 
@@ -172,8 +174,6 @@ def _anonymize_value(key: str | None, value: Any, rng: random.Random) -> Any:
         return value
 
     if isinstance(value, int):
-        if key == "intervalEnd":
-            return value + (rng.choice((-2, -1, 0, 1, 2)) * 3600)
         if key and key.lower() == "hour":
             return _shift_hour(value, rng.choice((-2, -1, 0, 1, 2)))
         return value
@@ -213,6 +213,11 @@ def anonymize_text(text: str, rng: random.Random) -> str:
     anonymized = re.sub(r'data-premise="[^"]+"', f'data-premise="{ANON_PREMISE}"', anonymized)
     anonymized = re.sub(r"EF-%2A[A-Za-z0-9%_\-]+", ANON_EF_TOKEN_URL, anonymized)
     anonymized = re.sub(r"EF-\*[A-Za-z0-9+/=_\-]+", ANON_EF_TOKEN, anonymized)
+    anonymized = re.sub(
+        r'(<input[^>]*\bname="rvt"[^>]*\bvalue=")[^"]*(")',
+        rf"\g<1>{ANON_RVT_TOKEN}\g<2>",
+        anonymized,
+    )
     anonymized = re.sub(r"Home Electric\+\s*", f"{ANON_TARIFF_PLAN} ", anonymized)
     anonymized = re.sub(
         r'(?<=data-testid="account-card-location">)[^<]+',
@@ -225,6 +230,9 @@ def anonymize_text(text: str, rng: random.Random) -> str:
         anonymized,
     )
     return anonymized
+
+
+RVT_RE = re.compile(r'<input[^>]*\bname="rvt"[^>]*\bvalue="(?!ANON_RVT_TOKEN)[^"]{20,}"')
 
 
 def verify_no_pii(fixtures_dir: Path) -> list[Path]:
@@ -242,6 +250,9 @@ def verify_no_pii(fixtures_dir: Path) -> list[Path]:
                 if match != ANON_ACCOUNT:
                     leaked.append(path)
                     break
+            else:
+                if RVT_RE.search(content):
+                    leaked.append(path)
     return leaked
 
 
