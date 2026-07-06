@@ -21,15 +21,15 @@
         }
       },
       "options": {
-        "title": "Import Options",
-        "description": "Full historical import is enabled by default. It fetches all available data from your bill periods (typically 6–13 months) as a background task. This involves many sequential requests to the Electric Ireland portal and may take 10–30 minutes. Uncheck if you only want the last 30 days.",
+        "title": "Setup Options",
+        "description": "Full historical import is enabled by default. It fetches all available data from your bill periods (typically 6–13 months) as a background task. This involves many sequential requests to the Electric Ireland portal and may take 10–30 minutes. Uncheck if you only want the last 30 days. You can also enter your plan discount now; it can be changed later from the integration options.",
         "data": {
           "import_full_history": "Import full history (default: on)",
           "discount_percentage": "Discount percentage (%)"
         },
         "data_description": {
           "import_full_history": "Fetch all available historical data from your bill periods. Default is ON. This runs in the background, issues many sequential requests to the Electric Ireland portal, and may take 10–30 minutes. There is a small rate-limit risk during this one-time import. Uncheck to import only the last 30 days now; you can trigger full history later via Reconfigure.",
-          "discount_percentage": "Enter your discount percentage (e.g., 20 for 20% Saver discount). A separate '_cost_discounted' statistic will be created with the discount applied. Standing charges are not included."
+          "discount_percentage": "Enter your discount percentage (e.g., 20 for 20% Saver discount). This is saved as an integration option, not setup data. A separate '_cost_discounted' statistic will be created with the discount applied. Standing charges are not included."
         }
       },
       "reauth_confirm": {
@@ -41,18 +41,16 @@
       },
       "reconfigure": {
         "title": "Reconfigure",
-        "description": "Update your password, discount, or clear cached meter identifiers for {username}.",
+        "description": "Update your password, trigger a full-history import, or clear cached meter identifiers for {username}. Change the discount percentage from the integration options instead.",
         "data": {
           "password": "Password",
           "force_rediscovery": "Re-discover meter IDs from the portal",
-          "import_full_history": "Import full history",
-          "discount_percentage": "Discount percentage (%)"
+          "import_full_history": "Import full history"
         },
         "data_description": {
           "password": "Your current portal password (re-enter even if unchanged)",
           "force_rediscovery": "Clear cached meter identifiers (partner, contract, premise) and re-discover them from the portal on the next data refresh. Use this if data imports have stopped but your credentials are correct.",
-          "import_full_history": "Fetch all available historical data from your bill periods (typically 6–13 months). This runs as a background task and may take 10–30 minutes. Only needed once — subsequent polls keep data current automatically.",
-          "discount_percentage": "Enter your discount percentage (e.g., 20 for 20% Saver discount). A separate '_cost_discounted' statistic will be created with the discount applied. To recalculate existing discounted data, select Import full history after changing the discount."
+          "import_full_history": "Fetch all available historical data from your bill periods (typically 6–13 months). This runs as a background task and may take 10–30 minutes. Only needed once — subsequent polls keep data current automatically."
         }
       }
     },
@@ -68,6 +66,20 @@
       "invalid_auth": "Authentication failed during account setup",
       "cannot_connect": "Unable to connect to the portal during account setup",
       "account_not_found": "The selected account could not be verified"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Electric Ireland Insights Options",
+        "description": "Update your plan discount percentage. Home Assistant reloads the integration after this changes. To recalculate all historical discounted cost data, update this option and then use Reconfigure → Import full history.",
+        "data": {
+          "discount_percentage": "Discount percentage (%)"
+        },
+        "data_description": {
+          "discount_percentage": "Enter your discount percentage (e.g., 20 for 20% Saver discount). A separate '_cost_discounted' statistic is created with the discount applied. Standing charges are not included."
+        }
+      }
     }
   },
   "entity": {
