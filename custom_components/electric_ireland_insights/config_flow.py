@@ -12,7 +12,14 @@ from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 
 from .api import ElectricIrelandAPI
-from .const import DOMAIN, NAME
+from .const import (
+    CONF_DISCOUNT_PERCENTAGE,
+    DEFAULT_DISCOUNT_PERCENTAGE,
+    DOMAIN,
+    NAME,
+    _redact_id,
+    hash_account_id,
+)
 from .exceptions import AccountNotFound, CannotConnect, InvalidAuth
 
 _LOGGER = logging.getLogger(__name__)
@@ -26,19 +33,23 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
 
 
 class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    VERSION = 2
+    VERSION = 1
+
+    @staticmethod
+    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> config_entries.OptionsFlow:
+        return ElectricIrelandInsightsOptionsFlow()
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
 
         if user_input is not None:
             try:
-                session = async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar())
-                api = ElectricIrelandAPI(
-                    user_input["username"],
-                    user_input["password"],
-                )
-                accounts = await api.discover_accounts(session)
+                async with async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar()) as session:
+                    api = ElectricIrelandAPI(
+                        user_input["username"],
+                        user_input["password"],
+                    )
+                    accounts = await api.discover_accounts(session)
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
             except CannotConnect:
@@ -95,13 +106,13 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
 
     async def _finish_flow(self, account_number: str) -> ConfigFlowResult:
         try:
-            session = async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar())
-            api = ElectricIrelandAPI(
-                self._username,
-                self._password,
-                account_number,
-            )
-            meter_ids = await api.validate_credentials(session)
+            async with async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar()) as session:
+                api = ElectricIrelandAPI(
+                    self._username,
+                    self._password,
+                    account_number,
+                )
+                meter_ids = await api.validate_credentials(session)
         except InvalidAuth:
             return self.async_abort(reason="invalid_auth")
         except CannotConnect:
@@ -114,12 +125,12 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
 
         self._account_number = account_number
         self._meter_ids = meter_ids
-        _LOGGER.debug("Account %s validated, proceeding to options", account_number)
+        _LOGGER.debug("Account %s validated, proceeding to options", _redact_id(account_number))
         return await self.async_step_options()
 
     async def async_step_options(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
-            await self.async_set_unique_id(self._account_number)
+            await self.async_set_unique_id(hash_account_id(self._account_number))
             self._abort_if_unique_id_configured()
             return self.async_create_entry(
                 title=f"{NAME} ({self._account_number})",
@@ -131,7 +142,11 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
                     "contract_id": self._meter_ids.get("contract"),
                     "premise_id": self._meter_ids.get("premise"),
                     "import_full_history": user_input.get("import_full_history", False),
-                    "discount_percentage": user_input.get("discount_percentage", 0),
+                },
+                options={
+                    CONF_DISCOUNT_PERCENTAGE: int(
+                        user_input.get(CONF_DISCOUNT_PERCENTAGE, DEFAULT_DISCOUNT_PERCENTAGE)
+                    ),
                 },
             )
 
@@ -140,7 +155,9 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
             data_schema=vol.Schema(
                 {
                     vol.Optional("import_full_history", default=True): bool,
-                    vol.Optional("discount_percentage", default=0): vol.All(vol.Coerce(int), vol.Range(min=0, max=100)),
+                    vol.Optional(CONF_DISCOUNT_PERCENTAGE, default=DEFAULT_DISCOUNT_PERCENTAGE): vol.All(
+                        vol.Coerce(int), vol.Range(min=0, max=100)
+                    ),
                 }
             ),
         )
@@ -155,13 +172,13 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
         if user_input is not None:
             new_data = {**reauth_entry.data, "password": user_input["password"]}
             try:
-                session = async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar())
-                api = ElectricIrelandAPI(
-                    new_data["username"],
-                    new_data["password"],
-                    new_data["account_number"],
-                )
-                meter_ids = await api.validate_credentials(session)
+                async with async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar()) as session:
+                    api = ElectricIrelandAPI(
+                        new_data["username"],
+                        new_data["password"],
+                        new_data["account_number"],
+                    )
+                    meter_ids = await api.validate_credentials(session)
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
             except CannotConnect:
@@ -172,7 +189,7 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
                 _LOGGER.exception("Unexpected exception during reauth")
                 errors["base"] = "cannot_connect"
             else:
-                await self.async_set_unique_id(new_data["account_number"])
+                await self.async_set_unique_id(hash_account_id(new_data["account_number"]))
                 self._abort_if_unique_id_mismatch()
                 return self.async_update_reload_and_abort(
                     reauth_entry,
@@ -200,13 +217,13 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
             force_rediscovery = user_input.get("force_rediscovery", False)
 
             try:
-                session = async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar())
-                api = ElectricIrelandAPI(
-                    username,
-                    password,
-                    entry.data["account_number"],
-                )
-                meter_ids = await api.validate_credentials(session)
+                async with async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar()) as session:
+                    api = ElectricIrelandAPI(
+                        username,
+                        password,
+                        entry.data["account_number"],
+                    )
+                    meter_ids = await api.validate_credentials(session)
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
             except CannotConnect:
@@ -219,7 +236,6 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
             else:
                 password_changed = password != entry.data["password"]
                 import_full_history = user_input.get("import_full_history", False)
-                discount_percentage = user_input.get("discount_percentage", entry.data.get("discount_percentage", 0))
                 if force_rediscovery or password_changed:
                     new_data = {
                         **entry.data,
@@ -228,7 +244,6 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
                         "contract_id": None,
                         "premise_id": None,
                         "import_full_history": import_full_history,
-                        "discount_percentage": discount_percentage,
                     }
                 else:
                     new_data = {
@@ -238,7 +253,6 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
                         "contract_id": meter_ids.get("contract"),
                         "premise_id": meter_ids.get("premise"),
                         "import_full_history": import_full_history,
-                        "discount_percentage": discount_percentage,
                     }
                 return self.async_update_reload_and_abort(entry, data=new_data)
 
@@ -250,13 +264,42 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
                         vol.Required("password"): str,
                         vol.Optional("force_rediscovery", default=False): bool,
                         vol.Optional("import_full_history", default=False): bool,
-                        vol.Optional("discount_percentage", default=entry.data.get("discount_percentage", 0)): vol.All(
-                            vol.Coerce(int), vol.Range(min=0, max=100)
-                        ),
                     }
                 ),
                 user_input or {"password": entry.data["password"]},
             ),
             description_placeholders={"username": entry.data["username"]},
             errors=errors,
+        )
+
+
+class ElectricIrelandInsightsOptionsFlow(config_entries.OptionsFlowWithReload):
+    """Options flow for Electric Ireland Insights."""
+
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is not None:
+            options = {
+                CONF_DISCOUNT_PERCENTAGE: int(user_input.get(CONF_DISCOUNT_PERCENTAGE, DEFAULT_DISCOUNT_PERCENTAGE)),
+            }
+            return self.async_create_entry(
+                title="",
+                data=options,
+            )
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema(
+                    {
+                        vol.Optional(CONF_DISCOUNT_PERCENTAGE, default=DEFAULT_DISCOUNT_PERCENTAGE): vol.All(
+                            vol.Coerce(int), vol.Range(min=0, max=100)
+                        ),
+                    }
+                ),
+                {
+                    CONF_DISCOUNT_PERCENTAGE: self.config_entry.options.get(
+                        CONF_DISCOUNT_PERCENTAGE, DEFAULT_DISCOUNT_PERCENTAGE
+                    ),
+                },
+            ),
         )
