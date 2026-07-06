@@ -32,6 +32,7 @@ from tests.assertions import (
 
 from .conftest import (
     ACCOUNT_1,
+    ACCOUNT_1_HASH,
     BASE_URL,
     CONTRACT,
     PARTNER,
@@ -43,8 +44,8 @@ from .conftest import (
     page,
 )
 
-STAT_CONSUMPTION = f"{DOMAIN}:{ACCOUNT_1}_consumption"
-STAT_COST = f"{DOMAIN}:{ACCOUNT_1}_cost"
+STAT_CONSUMPTION = f"{DOMAIN}:{ACCOUNT_1_HASH}_consumption"
+STAT_COST = f"{DOMAIN}:{ACCOUNT_1_HASH}_cost"
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +77,7 @@ def _entry(account: str = ACCOUNT_1, *, cached: bool = True) -> MockConfigEntry:
     }
     if cached:
         data.update(partner_id=PARTNER, contract_id=CONTRACT, premise_id=PREMISE)
-    return MockConfigEntry(domain=DOMAIN, data=data, unique_id=account, version=2)
+    return MockConfigEntry(domain=DOMAIN, data=data, unique_id=account, version=1)
 
 
 def _bp(start: date, end: date) -> dict:

@@ -20,6 +20,7 @@ from custom_components.electric_ireland_insights.const import DOMAIN
 
 from .conftest import (
     ACCOUNT_1,
+    ACCOUNT_1_HASH,
     CONTRACT,
     PARTNER,
     PREMISE,
@@ -29,8 +30,8 @@ from .conftest import (
     page,
 )
 
-STAT_CONSUMPTION = f"{DOMAIN}:{ACCOUNT_1}_consumption"
-STAT_COST = f"{DOMAIN}:{ACCOUNT_1}_cost"
+STAT_CONSUMPTION = f"{DOMAIN}:{ACCOUNT_1_HASH}_consumption"
+STAT_COST = f"{DOMAIN}:{ACCOUNT_1_HASH}_cost"
 
 
 def _entry(account: str = ACCOUNT_1) -> MockConfigEntry:
@@ -46,7 +47,7 @@ def _entry(account: str = ACCOUNT_1) -> MockConfigEntry:
             "tariff_stats_initialized": True,
         },
         unique_id=account,
-        version=2,
+        version=1,
     )
 
 

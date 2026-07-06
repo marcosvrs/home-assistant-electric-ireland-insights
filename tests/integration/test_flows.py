@@ -18,6 +18,7 @@ from custom_components.electric_ireland_insights.const import DOMAIN
 
 from .conftest import (
     ACCOUNT_1,
+    ACCOUNT_1_HASH,
     ACCOUNT_2,
     BASE_URL,
     CONTRACT,
@@ -70,7 +71,7 @@ async def test_single_account_creates_entry(
 
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {"import_full_history": False},
+            {"import_full_history": False, "discount_percentage": 25},
         )
         await hass.async_block_till_done()
 
@@ -79,6 +80,8 @@ async def test_single_account_creates_entry(
     assert result["data"]["partner_id"] == PARTNER
     assert result["data"]["contract_id"] == CONTRACT
     assert result["data"]["premise_id"] == PREMISE
+    assert "discount_percentage" not in result["data"]
+    assert result["options"] == {"discount_percentage": 25}
 
 
 async def test_multi_account_shows_selection_then_creates(
@@ -201,8 +204,8 @@ async def test_duplicate_account_aborts(
     existing = MockConfigEntry(
         domain=DOMAIN,
         data={"username": "u@test.com", "password": "pass", "account_number": ACCOUNT_1},
-        unique_id=ACCOUNT_1,
-        version=2,
+        unique_id=ACCOUNT_1_HASH,
+        version=1,
     )
     existing.add_to_hass(hass)
 
@@ -289,8 +292,8 @@ async def test_reauth_updates_credentials(
             "contract_id": CONTRACT,
             "premise_id": PREMISE,
         },
-        unique_id=ACCOUNT_1,
-        version=2,
+        unique_id=ACCOUNT_1_HASH,
+        version=1,
     )
     entry.add_to_hass(hass)
     db = page(acct_div(ACCOUNT_1))
@@ -327,8 +330,8 @@ async def test_reauth_invalid_auth_shows_error(
             "contract_id": CONTRACT,
             "premise_id": PREMISE,
         },
-        unique_id=ACCOUNT_1,
-        version=2,
+        unique_id=ACCOUNT_1_HASH,
+        version=1,
     )
     entry.add_to_hass(hass)
 
@@ -368,8 +371,8 @@ async def test_reconfigure_new_password_clears_ids(
             "contract_id": CONTRACT,
             "premise_id": PREMISE,
         },
-        unique_id=ACCOUNT_1,
-        version=2,
+        unique_id=ACCOUNT_1_HASH,
+        version=1,
     )
     entry.add_to_hass(hass)
 
@@ -405,8 +408,8 @@ async def test_reconfigure_force_rediscovery_clears_ids(
             "contract_id": CONTRACT,
             "premise_id": PREMISE,
         },
-        unique_id=ACCOUNT_1,
-        version=2,
+        unique_id=ACCOUNT_1_HASH,
+        version=1,
     )
     entry.add_to_hass(hass)
 
@@ -441,8 +444,8 @@ async def test_reconfigure_same_password_keeps_ids(
             "contract_id": "OLD_C",
             "premise_id": "OLD_PR",
         },
-        unique_id=ACCOUNT_1,
-        version=2,
+        unique_id=ACCOUNT_1_HASH,
+        version=1,
     )
     entry.add_to_hass(hass)
 
@@ -462,3 +465,41 @@ async def test_reconfigure_same_password_keeps_ids(
     assert entry.data["partner_id"] == PARTNER
     assert entry.data["contract_id"] == CONTRACT
     assert entry.data["premise_id"] == PREMISE
+
+
+async def test_options_flow_updates_discount(
+    recorder_mock,
+    hass: HomeAssistant,
+    enable_custom_integrations,
+    mock_setup_entry,
+) -> None:
+    """Options flow updates discount percentage without touching setup data."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "username": "u@test.com",
+            "password": "same",
+            "account_number": ACCOUNT_1,
+            "partner_id": PARTNER,
+            "contract_id": CONTRACT,
+            "premise_id": PREMISE,
+        },
+        options={"discount_percentage": 10},
+        unique_id=ACCOUNT_1_HASH,
+        version=1,
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "init"
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"discount_percentage": 30},
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert entry.options == {"discount_percentage": 30}
+    assert "discount_percentage" not in entry.data

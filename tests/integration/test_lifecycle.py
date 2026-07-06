@@ -1,4 +1,4 @@
-"""Full lifecycle, coordinator, multi-account, and migration tests.
+"""Full lifecycle, coordinator, and multi-account tests.
 
 Only fake: HTTP responses via aioresponses.
 Real: async_setup_entry, coordinator, recorder statistics, sensor platform.
@@ -21,6 +21,7 @@ from custom_components.electric_ireland_insights.const import DOMAIN, LOOKUP_DAY
 
 from .conftest import (
     ACCOUNT_1,
+    ACCOUNT_1_HASH,
     ACCOUNT_2,
     BASE_URL,
     CONTRACT,
@@ -43,7 +44,7 @@ def _entry(
     partner: str = PARTNER,
     contract: str = CONTRACT,
     premise: str = PREMISE,
-    version: int = 2,
+    version: int = 1,
     tariff_initialized: bool = True,
 ) -> MockConfigEntry:
     """Build a MockConfigEntry, optionally with cached meter IDs."""
@@ -343,16 +344,16 @@ async def test_coordinator_populates_data_structure(
 
 
 # ===================================================================
-# Migration
+# Version 1 direct setup
 # ===================================================================
 
 
-async def test_v1_to_v2_migration(
+async def test_version_one_entry_loads_directly(
     recorder_mock,
     hass: HomeAssistant,
     enable_custom_integrations,
 ) -> None:
-    """V1 entry (no cached IDs) → migrated to V2 with null IDs, then setup works."""
+    """Version 1 entry with no cached IDs discovers IDs during setup."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={
@@ -360,8 +361,8 @@ async def test_v1_to_v2_migration(
             "password": "pass",
             "account_number": ACCOUNT_1,
         },
-        unique_id=ACCOUNT_1,
-        version=1,  # ← old version
+        unique_id=ACCOUNT_1_HASH,
+        version=1,
     )
     entry.add_to_hass(hass)
     db = page(acct_div(ACCOUNT_1))
@@ -371,11 +372,8 @@ async def test_v1_to_v2_migration(
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-    # Migrated to V2
-    assert entry.version == 2
-    # Setup succeeded after migration
+    assert entry.version == 1
     assert entry.state == ConfigEntryState.LOADED
-    # Coordinator discovered IDs during setup
     assert entry.data["partner_id"] == PARTNER
 
 

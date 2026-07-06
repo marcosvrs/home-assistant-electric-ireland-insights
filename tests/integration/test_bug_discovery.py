@@ -33,6 +33,7 @@ from tests.assertions import (
 
 from .conftest import (
     ACCOUNT_1,
+    ACCOUNT_1_HASH,
     CONTRACT,
     PARTNER,
     PREMISE,
@@ -43,8 +44,8 @@ from .conftest import (
     page,
 )
 
-STAT_CONSUMPTION = f"{DOMAIN}:{ACCOUNT_1}_consumption"
-STAT_COST = f"{DOMAIN}:{ACCOUNT_1}_cost"
+STAT_CONSUMPTION = f"{DOMAIN}:{ACCOUNT_1_HASH}_consumption"
+STAT_COST = f"{DOMAIN}:{ACCOUNT_1_HASH}_cost"
 
 # sum(round(0.5 + h * 0.05, 2) for h in range(24)) = 25.8
 FLAT_DAILY_SUM = sum(round(0.5 + h * 0.05, 2) for h in range(24))
@@ -63,7 +64,7 @@ def _entry(account: str = ACCOUNT_1) -> MockConfigEntry:
             "tariff_stats_initialized": True,
         },
         unique_id=account,
-        version=2,
+        version=1,
     )
 
 
@@ -546,7 +547,7 @@ async def test_smart_tariff_produces_per_bucket_statistics(
     end_q = datetime(2026, 1, 22, tzinfo=UTC)
 
     for bucket_suffix in ("off_peak", "on_peak", "mid_peak"):
-        stat_id = f"{DOMAIN}:{ACCOUNT_1}_consumption_{bucket_suffix}"
+        stat_id = f"{DOMAIN}:{ACCOUNT_1_HASH}_consumption_{bucket_suffix}"
         stats = await _query(hass, stat_id, start_q, end_q)
         assert len(stats) > 0, f"No stats found for {stat_id}"
         assert_hour_aligned(stats)
@@ -585,7 +586,7 @@ async def test_tariff_bucket_sums_equal_aggregate_sum(
 
     bucket_total = 0.0
     for bucket_suffix in ("off_peak", "on_peak", "mid_peak"):
-        stat_id = f"{DOMAIN}:{ACCOUNT_1}_consumption_{bucket_suffix}"
+        stat_id = f"{DOMAIN}:{ACCOUNT_1_HASH}_consumption_{bucket_suffix}"
         bucket_stats = await _query(hass, stat_id, start_q, end_q, types={"sum"})
         if bucket_stats:
             bucket_total += bucket_stats[-1]["sum"]
