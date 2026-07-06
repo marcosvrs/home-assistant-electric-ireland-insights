@@ -9,9 +9,9 @@ from typing import TypedDict
 class ElectricIrelandDatapoint(TypedDict):
     """A single hourly datapoint from the Electric Ireland API."""
 
-    consumption: float
-    cost: float
-    intervalEnd: int
+    consumption: float | None
+    cost: float | None
+    start: int
     tariff_bucket: str
 
 

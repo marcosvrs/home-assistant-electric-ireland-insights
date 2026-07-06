@@ -14,6 +14,8 @@ import aiohttp
 import pytest
 from aioresponses import CallbackResult
 
+from custom_components.electric_ireland_insights.const import hash_account_id
+
 
 @pytest.fixture
 async def session():
@@ -29,6 +31,9 @@ PARTNER, CONTRACT, PREMISE = "RP1", "RC1", "RPR1"
 ACCOUNT_1 = "111111111"
 ACCOUNT_2 = "222222222"
 GAS_ACCOUNT = "333333333"
+ACCOUNT_1_HASH = hash_account_id(ACCOUNT_1)
+ACCOUNT_2_HASH = hash_account_id(ACCOUNT_2)
+GAS_ACCOUNT_HASH = hash_account_id(GAS_ACCOUNT)
 
 
 # ---------------------------------------------------------------------------
