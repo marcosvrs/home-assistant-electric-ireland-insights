@@ -15,7 +15,7 @@ tests/
 ├── test_coordinator.py             # Coordinator + statistics tests (46 tests, 1940 lines)
 ├── test_config_flow.py             # Config flow tests (20 tests, 638 lines)
 ├── test_sensor.py                  # Diagnostic sensor tests (9 tests, 166 lines)
-├── test_init.py                    # Setup/unload/migration tests (5 tests, 173 lines)
+├── test_init.py                    # Setup/unload/version tests (5 tests, 173 lines)
 ├── test_diagnostics.py             # Diagnostics redaction tests (4 tests, 87 lines)
 ├── fixtures/
 │   ├── sample_hourly_response.json # 24 hourly datapoints with consumption/cost
@@ -26,7 +26,7 @@ tests/
 ├── integration/                    # Real integration tests (aioresponses only, no mocked internals)
 │   ├── conftest.py                 # HTML/JSON builders, mock_ei_http helper
 │   ├── test_flows.py              # Config flow integration tests (12 tests, 464 lines)
-│   ├── test_lifecycle.py          # Setup/unload/migration integration tests (14 tests, 493 lines)
+│   ├── test_lifecycle.py          # Setup/unload/version integration tests (14 tests, 493 lines)
 │   ├── test_api.py                # Account discovery + meter data fetch (18 tests, 260 lines)
 │   ├── test_bug_discovery.py      # Bug discovery integration tests (11 tests, 599 lines)
 │   ├── test_edge_cases.py         # Edge case integration tests (18 tests, 839 lines)
@@ -60,7 +60,7 @@ tests/
 
 ### Root conftest.py Fixtures
 
-- **`mock_config_entry`**: Creates `MockConfigEntry` with domain, version=2, test credentials, and meter IDs. Unique ID set to account number.
+- **`mock_config_entry`**: Creates `MockConfigEntry` with domain, version=1, test credentials, and meter IDs. Unique ID set to account number.
 - **`mock_api`**: Patches `ElectricIrelandAPI` with `AsyncMock` returning test data. Used for coordinator and init tests.
 - **`mock_setup_entry`**: Patches `async_setup_entry` to skip full integration setup during config flow tests.
 - **pycares patch** (module-level): Disables `pycares._ChannelShutdownManager.start` to prevent `_run_safe_shutdown_loop` daemon thread that trips `verify_cleanup` on `pytest-homeassistant-custom-component` <0.13.316.
@@ -85,7 +85,7 @@ tests/
 | `test_coordinator.py` | 46 | First refresh (30-day backfill), subsequent refresh (4-day lookback), statistics import (cumulative sums, overlap detection, per-tariff), auth failure → `ConfigEntryAuthFailed`, connection failure → `UpdateFailed`, meter ID caching, state logging transitions, event firing, repair issues |
 | `test_config_flow.py` | 20 | User step (happy path, invalid auth, connection error, unknown error), account selection (single/multiple accounts), reauth flow (success, failure), reconfigure flow (password change, meter ID rediscovery), unique ID abort |
 | `test_sensor.py` | 9 | Entity creation, native_value correctness, unique_id format, device_info structure, entity_category = DIAGNOSTIC, disabled_by_default = True |
-| `test_init.py` | 5 | Setup success, unload success, v1→v2 migration, setup failure handling, full history import trigger |
+| `test_init.py` | 5 | Setup success, unload success, version 1 direct setup, setup failure handling, full history import trigger |
 | `test_diagnostics.py` | 4 | Diagnostics data structure, credential redaction, meter ID redaction, coordinator data inclusion |
 
 ### Integration Tests
@@ -93,7 +93,7 @@ tests/
 | File | Tests | What It Validates |
 |------|-------|-------------------|
 | `test_flows.py` | 12 | Full config flow with real HTML parsing: single/multi account, reauth, reconfigure, error recovery, duplicate abort |
-| `test_lifecycle.py` | 14 | Full setup→refresh→unload cycle, meter ID discovery + caching, multi-account isolation, v1→v2 migration, auth/connection failure handling, full history import |
+| `test_lifecycle.py` | 14 | Full setup→refresh→unload cycle, meter ID discovery + caching, multi-account isolation, version 1 direct setup, auth/connection failure handling, full history import |
 | `test_api.py` | 18 | Account discovery from real HTML, hourly meter data fetch with real JSON parsing |
 | `test_bug_discovery.py` | 11 | Bug discovery scenarios: cumulative statistics edge cases, data gap handling, overlap recovery |
 | `test_edge_cases.py` | 18 | Edge case scenarios: HTML variations, timestamp boundary conditions, empty/partial data, recovery from corrupt state |

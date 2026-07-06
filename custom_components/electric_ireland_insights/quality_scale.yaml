@@ -9,8 +9,8 @@ rules:
     status: exempt
     comment: No custom actions exist, so there are no action exceptions to document.
   brands:
-    status: done
-    comment: Brand assets in custom_components/electric_ireland_insights/brand/ (local brand support since HA 2026.3).
+    status: pending
+    comment: Brand assets exist locally, but upstream home-assistant/brands submission is still pending.
   common-modules:
     status: done
     comment: Code is split into coordinator.py, config_flow.py, sensor.py, and diagnostics.py.
@@ -88,7 +88,7 @@ rules:
     comment: sensor.py sets EntityCategory.DIAGNOSTIC on entities.
   entity-device-class:
     status: done
-    comment: sensor.py uses SensorDeviceClass.TIMESTAMP for last_import_time.
+    comment: sensor.py uses SensorDeviceClass.TIMESTAMP for last_import_time and SensorDeviceClass.DURATION for data_freshness_days.
   entity-disabled-by-default:
     status: done
     comment: sensor.py disables diagnostic entities by default.
@@ -154,4 +154,4 @@ rules:
     comment: pytest tests/ --cov --cov-fail-under=95 enforced in CI with 225 tests across unit and integration suites.
   unique-config-entry:
     status: done
-    comment: config_flow.py calls async_set_unique_id(account_number) and aborts duplicates.
+    comment: config_flow.py calls async_set_unique_id(hash_account_id(account_number)) and aborts duplicates.
