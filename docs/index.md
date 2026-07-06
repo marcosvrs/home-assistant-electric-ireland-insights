@@ -13,7 +13,6 @@ ha_platforms:
   - diagnostics
   - sensor
 ha_integration_type: service
-ha_quality_scale: platinum
 ---
 
 # Electric Ireland Insights (Unofficial)
@@ -47,11 +46,12 @@ During setup you will be asked for:
 
 After authenticating, the integration discovers all electricity accounts linked to your login. If only one account is found, it is selected automatically. If multiple accounts are found, a dropdown is shown for you to select which account to configure. Each config entry supports one account — add the integration again for additional accounts.
 
-A final **Import Options** step is shown before setup completes:
+A final **Setup Options** step is shown before setup completes:
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | **Import full history** | **Checked (on)** | Fetch all available historical data from your bill periods (typically 6–13 months) as a background task. Because Electric Ireland does not publish an official API, this is done via many sequential web-portal requests and may take **10–30 minutes** for the initial import. There is a small rate-limit risk during this one-time background work. Uncheck this option if you only want the last 30 days imported now; you can still trigger a full import later via **Reconfigure**. |
+| **Discount percentage** | `0` | Your electricity plan discount (for example, `20` for a 20% Saver discount). This is saved as an integration option and can be changed later from **Options** without re-entering credentials. |
 
 > **Why is full history on by default?** The Energy Dashboard is most useful with complete historical context. The import runs in the background and does not block Home Assistant. If you are concerned about rate limiting or want a faster first setup, uncheck this option.
 
@@ -81,7 +81,7 @@ Imported statistics remain in the Home Assistant recorder after removal. To also
 The integration fetches data from the Electric Ireland portal **every 3 hours**.
 
 - **First install**: the initial setup fetches up to **30 days** of data (this may take a few minutes as each day requires a separate request to the Electric Ireland portal).
-- **Full history (opt-in)**: to import all available historical data (typically 6–13 months), go to **Reconfigure** and check **Import full history**. This runs as a background task without blocking Home Assistant, typically taking 10–30 minutes.
+- **Full history**: full history is enabled by default during setup. To import all available historical data again later (typically 6–13 months), go to **Reconfigure** and check **Import full history**. This runs as a background task without blocking Home Assistant, typically taking 10–30 minutes.
 - **Subsequent runs**: fetches up to the last **4 days**, limited to dates within known billing periods, to pick up newly published readings. Dates outside any billing period are skipped.
 - **Pre-flight optimization**: the integration periodically queries billing period boundaries (cached for 24 hours) to identify which dates contain meter data, reducing unnecessary API calls. If the query fails entirely (no cached data available), the integration falls back to the full lookback window.
 - **Provider delay**: Electric Ireland publishes meter data with a **1–3 day delay** (data comes from ESB). The Data Freshness diagnostic sensor shows how old the latest available reading is (see [Diagnostic entities](#diagnostic-entities)).
@@ -151,16 +151,23 @@ These entities are **disabled by default**. Enable them in **Settings → Device
 
 ## Reconfiguration
 
-To update your password or troubleshoot data import issues, use **Settings → Devices & services → Electric Ireland Insights → ⋮ → Reconfigure**.
+To update your password, trigger a full-history import, or troubleshoot data import issues, use **Settings → Devices & services → Electric Ireland Insights → ⋮ → Reconfigure**.
 
 | Option | Description |
 |--------|-------------|
 | **Password** | Re-enter your current password (required to re-authenticate the session, even if unchanged) |
 | **Re-discover meter IDs** | Clears the cached meter identifiers (partner, contract, premise) and forces the integration to re-discover them from the Electric Ireland portal on the next refresh. Use this when data imports have stopped but your credentials are still valid — typically caused by Electric Ireland changing internal account identifiers after a meter swap or account migration. |
 | **Import full history** | Fetches all available historical data from your bill periods (typically 6–13 months). Runs as a background task without blocking Home Assistant. Only needed once — subsequent polls keep data current automatically. |
-| **Discount percentage** | Your electricity plan discount (e.g., 20 for 20% Saver). Creates a separate `_cost_discounted` statistic with the discount applied. To also recalculate existing `_cost_discounted` data with the new discount, select **Import full history** after changing the discount. The `_cost` statistic always remains gross. |
 
 If the password has changed, cached meter IDs are cleared automatically — you don't need to check the re-discovery option.
+
+## Options
+
+To change your discount percentage after setup, use **Settings → Devices & services → Electric Ireland Insights → Configure** (or **Options**, depending on your Home Assistant version).
+
+| Option | Description |
+|--------|-------------|
+| **Discount percentage** | Your electricity plan discount (e.g., 20 for 20% Saver). Creates a separate `_cost_discounted` statistic with the discount applied. The integration reloads after this option changes. To also recalculate existing `_cost_discounted` data with the new discount, update the option and then use **Reconfigure → Import full history**. The `_cost` statistic always remains gross. |
 
 ## Events
 
@@ -217,7 +224,8 @@ automation:
 ## Known limitations
 
 - **1–3 day data delay**: Hourly readings are published by ESB with a delay; the integration cannot fetch data faster than ESB publishes it.
-- **Discount applies to future data only by default**: Changing the discount percentage affects only newly fetched or re-fetched `_cost_discounted` data (the last 4 days on each poll). To recalculate all historical `_cost_discounted` data with a new discount, use **Reconfigure → Import full history** after changing the discount. The `_cost` statistic always remains gross. Standing charges and levies are never included.
+- **DST transition gap**: Spring-forward and fall-back day behavior has not yet been verified with real Electric Ireland capture fixtures. The current DST regression tests are skipped until those captures are available.
+- **Discount applies to future data only by default**: Changing the discount percentage in **Options** affects only newly fetched or re-fetched `_cost_discounted` data (the last 4 days on each poll). To recalculate all historical `_cost_discounted` data with a new discount, update the option and then use **Reconfigure → Import full history**. The `_cost` statistic always remains gross. Standing charges and levies are never included.
 - **Scraping dependency**: The integration authenticates via the Electric Ireland web portal. Changes to the portal's HTML structure may break the login flow until the integration is updated.
 - **Single account per entry**: Each config entry supports one electricity account. To monitor multiple accounts, add the integration once per account.
 

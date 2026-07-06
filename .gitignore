@@ -50,6 +50,10 @@ core
 .sisyphus/
 opencode.json
 .playwright-mcp/
+.omo/
+
+# Local capture tooling — development only, never ship
+scripts/mitm/
 
 # Project
 pr-description.md

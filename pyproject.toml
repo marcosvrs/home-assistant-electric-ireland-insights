@@ -36,6 +36,7 @@ log_format = "%(asctime)s.%(msecs)03d %(levelname)-8s %(threadName)s %(name)s:%(
 log_date_format = "%Y-%m-%d %H:%M:%S"
 
 [tool.coverage.run]
+branch = true
 omit = [
   "custom_components/electric_ireland_insights/types.py",
 ]

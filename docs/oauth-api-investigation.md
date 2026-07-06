@@ -105,7 +105,7 @@ Extracted from `/vendor/bidgely/js/bundle.js` (served from EI's portal):
 |-----------|-------|
 | `pilotId` | `20015` |
 | `clientId` | `ei-dashboard` |
-| `clientSecret` | `d@shbo@rd!` |
+| `clientSecret` | `<redacted>` (public widget credential visible in portal JS) |
 | Domain pattern | `ei(-?)([a-z]*[0-9]*)\.bidgely\.com` |
 
 ### Bidgely API Domains Found in Bundle
@@ -170,10 +170,10 @@ We tested whether the extracted credentials could provide direct API access.
 POST https://api.eu.bidgely.com/oauth/token
   grant_type=client_credentials
   client_id=ei-dashboard
-  client_secret=d@shbo@rd!
+  client_secret=<redacted>
 
-→ 200 OK
-  {"access_token":"1a7df726-...","token_type":"bearer","expires_in":863999}
+  → 200 OK
+  {"access_token":"<redacted>","token_type":"bearer","expires_in":863999}
 ```
 
 The `client_credentials` grant returns a valid **utility-level bearer token** (10-day expiry).

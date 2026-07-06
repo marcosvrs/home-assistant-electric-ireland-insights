@@ -2,7 +2,7 @@
 
 [![Open Integration](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=marcosvrs&repository=home-assistant-electric-ireland-insights&category=integration)
 
-> **Origin & Attribution**: This integration is a continuation of the foundational work by [**@barreeeiroo**](https://github.com/barreeeiroo) and his original [Home-Assistant-Electric-Ireland](https://github.com/barreeeiroo/Home-Assistant-Electric-Ireland) project. The v0.4.0 rewrite builds on that codebase with a Platinum-tier architecture, external statistics, and per-tariff Energy Dashboard support. We gratefully acknowledge his pioneering effort that made this integration possible.
+> **Origin & Attribution**: This integration is a continuation of the foundational work by [**@barreeeiroo**](https://github.com/barreeeiroo) and his original [Home-Assistant-Electric-Ireland](https://github.com/barreeeiroo/Home-Assistant-Electric-Ireland) project. The v0.4.0 rewrite builds on that codebase with an external-statistics architecture and per-tariff Energy Dashboard support. We gratefully acknowledge his pioneering effort that made this integration possible.
 >
 > **Disclaimer**: This is an independent, community-built integration. It is **not affiliated with, authorized by, or endorsed by** Electric Ireland, ESB Group, or any of their subsidiaries. "Electric Ireland" is a registered trademark of Electric Ireland Ltd.
 >
@@ -13,8 +13,6 @@
 > Under [GDPR Article 20](https://gdpr-info.eu/art-20-gdpr/), users have the right to receive their personal energy data in a portable format. This integration helps users import their own data into Home Assistant — all data remains on the user's local instance.
 >
 > See [LEGAL.md](LEGAL.md) for full legal notice, privacy information, and trademark details.
-
-> **Moved from the old repo?** This integration now lives at `marcosvrs/home-assistant-electric-ireland-insights`. The previous fork (`marcosvrs/Home-Assistant-Electric-Ireland`) is archived. See the [migration guide](#migrating-from-the-archived-repo) below.
 
 Home Assistant integration with **Electric Ireland insights**.
 
@@ -45,7 +43,7 @@ polls look back 4 days to pick up newly published readings. Full historical data
 
 ### How does the discount percentage work?
 
-The Electric Ireland API reports **gross** cost as per tariff price (with VAT). If your plan includes a discount (for example, the 20% Saver discount or 30% Off Direct Debit), you can enter your discount percentage during setup or reconfiguration.
+The Electric Ireland API reports **gross** cost as per tariff price (with VAT). If your plan includes a discount (for example, the 20% Saver discount or 30% Off Direct Debit), you can enter your discount percentage during setup or change it later from the integration options.
 
 The integration always keeps the `_cost` statistic as the **gross** amount imported from the portal. When a discount percentage is configured, it also creates a separate `_cost_discounted` statistic with the discount applied. Use `_cost_discounted` in the Energy Dashboard if you want cost tracking that matches your billed amount more closely.
 
@@ -123,64 +121,20 @@ Every 3 hours:
 * On **first install**: by default, imports all available historical data (typically 6–13 months) as a background task. This uses many sequential portal requests and may take 10–30 minutes. Uncheck **Import full history** during setup to import only the last 30 days.
 * On **subsequent runs**: fetches the last 4 days to pick up any newly published meter readings.
 * **Full history**: during setup or via **Reconfigure → Import full history**, the user can trigger or re-trigger a background task that fetches all available bill period data. This runs without blocking Home Assistant and typically takes 10–30 minutes.
+* **Discount percentage**: configured during setup or later from the integration **Options**. Changing it reloads the integration and affects newly fetched or re-fetched discounted cost statistics.
 * Requests are made **sequentially** (one day at a time) to avoid rate limiting.
 * Both consumption and cost are returned in the same response, with 24 hourly datapoints per day.
 * Data is timestamped at the end of each hourly interval (e.g., `00:59:59` for the midnight hour) and normalized to the hour start for statistics alignment.
 
-## Breaking Changes in v0.4.0
+## Release notes
 
-This is a **major architectural change**. If you are upgrading from v0.2.x:
-
-1. **New statistic IDs**: Statistics are now imported as external statistics with IDs like `electric_ireland_insights:{account_number}_consumption`. The old entity-based statistics (`sensor.electric_ireland_consumption_*`) will no longer be updated.
-
-2. **Energy Dashboard reconfiguration required**: You must re-configure your Energy Dashboard to use the new statistic IDs. Go to **Settings → Energy → Grid consumption** and select the new `electric_ireland_insights` statistics.
-
-3. **Old statistics not migrated**: Historical data from v0.2.x will remain in your database but will not be carried over to the new statistic IDs. The integration will import up to 30 days of history on first startup. Use **Reconfigure → Import full history** to fetch all available data.
-
-4. **`homeassistant-historical-sensor` dependency removed**: The alpha library dependency has been removed. No action required — HA will uninstall it automatically.
+This is the first announced stable release of Electric Ireland Insights. The current statistics model and setup flow are the supported baseline.
 
 ## Known Limitations
 
 * **1-3 day data delay**: Hourly meter readings are published by ESB with a 1-3 day delay. This integration cannot fetch data faster than ESB publishes it.
-* **Discount applies to future `_cost_discounted` data only by default**: Changing the discount percentage affects only newly fetched or re-fetched `_cost_discounted` data (the last 4 days on each poll). The `_cost` statistic always remains gross. To recalculate all historical `_cost_discounted` data with a new discount, use **Reconfigure → Import full history** after changing the discount. Standing charges and levies are never included.
+* **Discount applies to future `_cost_discounted` data only by default**: Changing the discount percentage in **Options** affects only newly fetched or re-fetched `_cost_discounted` data (the last 4 days on each poll). The `_cost` statistic always remains gross. To recalculate all historical `_cost_discounted` data with a new discount, update the option and then use **Reconfigure → Import full history**. Standing charges and levies are never included.
 * **Scraping dependency**: The integration authenticates via the Electric Ireland web portal. Changes to the portal's HTML structure may break the login flow until the integration is updated.
-
-## Migrating from the archived repo
-
-If you previously installed this integration from `marcosvrs/Home-Assistant-Electric-Ireland`, that repository is now archived. Active development continues in this repository.
-
-### Why move?
-
-The local codebase evolved into a full v0.4.0 rewrite (external statistics, per-tariff support, Platinum-tier architecture) that is no longer compatible with the upstream v0.2.x fork. Rather than force-push over the fork history, we created this independent repository and archived the old one.
-
-### Migration steps
-
-1. **Remove the old HACS custom repository**
-   - In Home Assistant, go to **HACS → ⋮ → Custom repositories**.
-   - Remove `https://github.com/marcosvrs/Home-Assistant-Electric-Ireland`.
-
-2. **Add the new HACS custom repository**
-   - In **HACS → ⋮ → Custom repositories**, add:
-     ```
-     https://github.com/marcosvrs/home-assistant-electric-ireland-insights
-     ```
-   - Category: **Integration**.
-
-3. **Download the new version**
-   - Find **Electric Ireland Insights** in HACS and download it.
-   - Restart Home Assistant.
-
-4. **Update your Energy Dashboard**
-   - The new integration uses different statistic IDs: `electric_ireland_insights:{account}_consumption` and `electric_ireland_insights:{account}_cost`.
-   - Go to **Settings → Dashboards → Energy → Grid consumption** and replace the old statistics with the new ones.
-   - If you configured a discount, use the `_cost_discounted` statistic for cost tracking.
-
-5. **Optional: clean up old statistics**
-   - Old v0.2.x statistics remain in the recorder but are no longer updated. To remove them, go to **Developer tools → Statistics** and delete any old `electric_ireland_*` entries you no longer want.
-
-### Need help?
-
-Open issues and discussions in this repository only. The archived repository will not receive updates or support.
 
 ## Acknowledgements
 
