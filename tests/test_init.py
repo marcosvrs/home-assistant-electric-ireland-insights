@@ -247,6 +247,7 @@ async def test_unload_entry_closes_session_after_platforms(
             "async_unload_platforms",
             new_callable=AsyncMock,
         ) as mock_unload:
+
             async def tracking_unload(*args, **kwargs):
                 order.append("unload")
                 return True

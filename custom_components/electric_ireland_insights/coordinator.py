@@ -259,9 +259,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                     datapoints.extend(day_data)
 
             if failed_dates and not datapoints:
-                raise CannotConnect(
-                    f"All {len(failed_dates)} lookback day(s) failed with connection errors"
-                )
+                raise CannotConnect(f"All {len(failed_dates)} lookback day(s) failed with connection errors")
 
             if not datapoints:
                 if self._has_imported_before:
@@ -431,9 +429,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                 try:
                     bill_periods = await self._api.get_bill_periods(session, meter_ids)
                 except CannotConnect:
-                    _LOGGER.warning(
-                        "Full history backfill: cannot fetch bill periods, will retry"
-                    )
+                    _LOGGER.warning("Full history backfill: cannot fetch bill periods, will retry")
                     async_create_issue(
                         self.hass,
                         DOMAIN,
