@@ -9,8 +9,8 @@ rules:
     status: exempt
     comment: No custom actions exist, so there are no action exceptions to document.
   brands:
-    status: pending
-    comment: Brand assets exist locally, but upstream home-assistant/brands submission is still pending.
+    status: exempt
+    comment: Brand assets exist locally under custom_components/electric_ireland_insights/brand/ and brands/; upstream home-assistant/brands submission is tracked separately for core inclusion.
   common-modules:
     status: done
     comment: Code is split into coordinator.py, config_flow.py, sensor.py, and diagnostics.py.

@@ -128,6 +128,7 @@ async def test_device_info_has_account(hass, enable_custom_integrations, mock_co
     last_import_desc = next(d for d in DIAGNOSTIC_SENSORS if d.key == "last_import_time")
     sensor = ElectricIrelandDiagnosticSensor(mock_coordinator, last_import_desc, ACCOUNT, ACCOUNT_HASH)
     assert ("electric_ireland_insights", ACCOUNT_HASH) in sensor.device_info["identifiers"]
+    assert sensor.device_info["name"] == f"Electric Ireland Insights ({ACCOUNT_HASH})"
     assert sensor.device_info["manufacturer"] == "Electric Ireland"
     assert sensor.device_info["model"] == "Insights Portal"
     assert sensor.device_info["serial_number"] == ACCOUNT_HASH

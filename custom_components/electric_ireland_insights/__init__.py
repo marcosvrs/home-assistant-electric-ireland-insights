@@ -30,7 +30,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ElectricIrelandConfigEnt
 
     entry.runtime_data = coordinator
 
-    await coordinator.async_config_entry_first_refresh()
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except Exception:
+        await coordinator.async_close()
+        raise
 
     entry.async_on_unload(coordinator.async_add_listener(lambda: None))
 

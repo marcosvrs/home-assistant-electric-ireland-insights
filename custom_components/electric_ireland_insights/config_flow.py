@@ -133,7 +133,7 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
             await self.async_set_unique_id(hash_account_id(self._account_number))
             self._abort_if_unique_id_configured()
             return self.async_create_entry(
-                title=f"{NAME} ({self._account_number})",
+                title=f"{NAME} ({hash_account_id(self._account_number)})",
                 data={
                     "username": self._username,
                     "password": self._password,

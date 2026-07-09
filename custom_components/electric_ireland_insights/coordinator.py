@@ -88,6 +88,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
         self._bill_periods: list[BillPeriod] = []
         self._bill_periods_fetched_at: datetime | None = None
         self._session = async_create_clientsession(hass, cookie_jar=aiohttp.CookieJar())
+        self._closed = False
 
     def _check_data_gap(self, result: CoordinatorData) -> None:
         latest_ts = result.get("latest_data_timestamp")
@@ -102,7 +103,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                     severity=IssueSeverity.WARNING,
                     translation_key="data_gap",
                     translation_placeholders={
-                        "account": self._account,
+                        "account": self._account_hash,
                         "days": str(round(gap_days, 1)),
                     },
                 )
@@ -167,6 +168,8 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                     "premise_id": discovered_ids["premise"],
                 }
                 self.hass.config_entries.async_update_entry(self._config_entry, data=new_data)
+                self._bill_periods = []
+                self._bill_periods_fetched_at = None
                 _LOGGER.debug(
                     "Updated cached meter IDs: partner=%s",
                     _redact_id(discovered_ids["partner"]),
@@ -239,6 +242,8 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                             self._config_entry,
                             data=new_data,
                         )
+                        self._bill_periods = []
+                        self._bill_periods_fetched_at = None
                     day_data = await self._api.get_hourly_usage(
                         session,
                         meter_ids,
@@ -294,7 +299,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                     "cost",
                     f"{DOMAIN}:{self._account_hash}_cost_discounted",
                     "EUR",
-                    name_override=f"Electric Ireland Cost Discounted ({self._account})",
+                    name_override=f"Electric Ireland Cost Discounted ({self._account_hash})",
                     discount=discount,
                 )
             _LOGGER.debug(
@@ -366,6 +371,9 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
 
     async def async_close(self) -> None:
         """Close the coordinator's aiohttp session."""
+        if self._closed:
+            return
+        self._closed = True
         await _close_session(self._session)
 
     async def async_tariff_backfill(self, *, full_history: bool = False) -> None:
@@ -449,7 +457,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                         "cost",
                         f"{DOMAIN}:{self._account_hash}_cost_discounted",
                         "EUR",
-                        name_override=f"Electric Ireland Cost Discounted ({self._account})",
+                        name_override=f"Electric Ireland Cost Discounted ({self._account_hash})",
                         discount=discount,
                     )
 
@@ -461,19 +469,53 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                 if await self._should_import_per_tariff_statistics(seen_buckets):
                     await self._insert_per_tariff_statistics(buckets, discount=discount)
 
-            new_data = {**dict(self._config_entry.data), "tariff_stats_initialized": True}
+            new_data = {**dict(self._config_entry.data)}
+            if datapoints:
+                new_data["tariff_stats_initialized"] = True
             if full_history:
                 new_data["import_full_history"] = False
             self.hass.config_entries.async_update_entry(self._config_entry, data=new_data)
             _LOGGER.info("Background backfill complete (%d datapoints)", len(datapoints))
+            async_delete_issue(self.hass, DOMAIN, f"backfill_auth_failed_{self._account_hash}")
+            async_delete_issue(self.hass, DOMAIN, f"backfill_connection_failed_{self._account_hash}")
+            async_delete_issue(self.hass, DOMAIN, f"backfill_failed_{self._account_hash}")
 
-        except (InvalidAuth, CannotConnect) as err:
-            _LOGGER.warning(
-                "Background backfill failed (will retry next restart): %s",
-                type(err).__name__,
+        except InvalidAuth as err:
+            _LOGGER.warning("Background backfill failed due to invalid auth")
+            async_create_issue(
+                self.hass,
+                DOMAIN,
+                f"backfill_auth_failed_{self._account_hash}",
+                is_fixable=False,
+                severity=IssueSeverity.ERROR,
+                translation_key="backfill_auth_failed",
+                translation_placeholders={"account": self._account_hash},
             )
+            raise ConfigEntryAuthFailed from err
+        except CannotConnect as err:
+            _LOGGER.warning("Background backfill failed due to connection error")
+            async_create_issue(
+                self.hass,
+                DOMAIN,
+                f"backfill_connection_failed_{self._account_hash}",
+                is_fixable=False,
+                severity=IssueSeverity.WARNING,
+                translation_key="backfill_connection_failed",
+                translation_placeholders={"account": self._account_hash},
+            )
+            raise
         except Exception:
             _LOGGER.exception("Unexpected error during background backfill")
+            async_create_issue(
+                self.hass,
+                DOMAIN,
+                f"backfill_failed_{self._account_hash}",
+                is_fixable=False,
+                severity=IssueSeverity.WARNING,
+                translation_key="backfill_failed",
+                translation_placeholders={"account": self._account_hash},
+            )
+            raise
         finally:
             await _close_session(session)
 
@@ -493,14 +535,14 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                 "consumption",
                 f"{DOMAIN}:{self._account_hash}_consumption_{bucket_name}",
                 UnitOfEnergy.KILO_WATT_HOUR,
-                name_override=f"Electric Ireland Consumption {display} ({self._account})",
+                name_override=f"Electric Ireland Consumption {display} ({self._account_hash})",
             )
             await self._insert_statistics(
                 bucket_dps,
                 "cost",
                 f"{DOMAIN}:{self._account_hash}_cost_{bucket_name}",
                 "EUR",
-                name_override=f"Electric Ireland Cost {display} ({self._account})",
+                name_override=f"Electric Ireland Cost {display} ({self._account_hash})",
             )
             if discount:
                 await self._insert_statistics(
@@ -508,7 +550,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                     "cost",
                     f"{DOMAIN}:{self._account_hash}_cost_{bucket_name}_discounted",
                     "EUR",
-                    name_override=f"Electric Ireland Cost {display} Discounted ({self._account})",
+                    name_override=f"Electric Ireland Cost {display} Discounted ({self._account_hash})",
                     discount=discount,
                 )
 
@@ -570,7 +612,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                 )
             )
 
-        default_name = f"Electric Ireland {'Consumption' if metric == 'consumption' else 'Cost'} ({self._account})"
+        default_name = f"Electric Ireland {'Consumption' if metric == 'consumption' else 'Cost'} ({self._account_hash})"
         stat_name = name_override or default_name
         metadata = StatisticMetaData(
             has_sum=True,

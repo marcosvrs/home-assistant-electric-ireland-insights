@@ -2393,6 +2393,7 @@ async def test_repair_issue_created_when_data_stale(recorder_mock, hass, mock_co
     issue = issue_registry.async_get_issue(DOMAIN, f"data_gap_{ACCOUNT_HASH}")
     assert issue is not None
     assert issue.severity == "warning"
+    assert issue.translation_placeholders["account"] == ACCOUNT_HASH
 
 
 async def test_repair_issue_deleted_when_data_fresh(recorder_mock, hass, mock_config_entry):
@@ -2408,7 +2409,7 @@ async def test_repair_issue_deleted_when_data_fresh(recorder_mock, hass, mock_co
         is_fixable=False,
         severity=IssueSeverity.WARNING,
         translation_key="data_gap",
-        translation_placeholders={"account": ACCOUNT, "days": "7.0"},
+        translation_placeholders={"account": ACCOUNT_HASH, "days": "7.0"},
     )
 
     issue_registry = async_get_issue_registry(hass)
@@ -2712,7 +2713,175 @@ async def test_tariff_backfill_initial_bill_periods_cannot_connect_falls_back(re
         await coordinator.async_tariff_backfill(full_history=False)
 
         assert mock_api_instance.get_hourly_usage.call_count == INITIAL_LOOKBACK_DAYS
-        assert entry.data.get("tariff_stats_initialized") is True
+        assert entry.data.get("tariff_stats_initialized") is not True
+
+
+async def test_backfill_invalid_auth_creates_repair_issue_and_raises(recorder_mock, hass):
+    """Backfill InvalidAuth must create a repair issue and raise ConfigEntryAuthFailed."""
+    entry = MockConfigEntry(
+        domain="electric_ireland_insights",
+        data={
+            "username": "test@test.com",
+            "password": "testpass",
+            "account_number": ACCOUNT,
+        },
+        unique_id=ACCOUNT_HASH,
+    )
+    entry.add_to_hass(hass)
+
+    with (
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI") as mock_api_class,
+        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
+    ):
+        mock_api_instance = AsyncMock()
+        _setup_api_mock(mock_api_instance, authenticate_side_effect=InvalidAuth("bad creds"))
+        mock_api_class.return_value = mock_api_instance
+
+        from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
+
+        coordinator = ElectricIrelandCoordinator(hass, entry)
+        with pytest.raises(ConfigEntryAuthFailed):
+            await coordinator.async_tariff_backfill()
+
+    issue_registry = async_get_issue_registry(hass)
+    assert issue_registry.async_get_issue(DOMAIN, f"backfill_auth_failed_{ACCOUNT_HASH}") is not None
+
+
+async def test_backfill_cannot_connect_creates_repair_issue(recorder_mock, hass):
+    """Backfill CannotConnect must create a repair issue."""
+    entry = MockConfigEntry(
+        domain="electric_ireland_insights",
+        data={
+            "username": "test@test.com",
+            "password": "testpass",
+            "account_number": ACCOUNT,
+        },
+        unique_id=ACCOUNT_HASH,
+    )
+    entry.add_to_hass(hass)
+
+    with (
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI") as mock_api_class,
+        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
+    ):
+        mock_api_instance = AsyncMock()
+        _setup_api_mock(mock_api_instance, authenticate_side_effect=CannotConnect("network error"))
+        mock_api_class.return_value = mock_api_instance
+
+        from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
+
+        coordinator = ElectricIrelandCoordinator(hass, entry)
+        with pytest.raises(CannotConnect):
+            await coordinator.async_tariff_backfill()
+
+    issue_registry = async_get_issue_registry(hass)
+    assert issue_registry.async_get_issue(DOMAIN, f"backfill_connection_failed_{ACCOUNT_HASH}") is not None
+
+
+async def test_backfill_empty_does_not_mark_initialized(recorder_mock, hass):
+    """Backfill that imports no datapoints must not set tariff_stats_initialized=True."""
+    entry = MockConfigEntry(
+        domain="electric_ireland_insights",
+        data={
+            "username": "test@test.com",
+            "password": "testpass",
+            "account_number": ACCOUNT,
+            "import_full_history": True,
+        },
+        unique_id=ACCOUNT_HASH,
+    )
+    entry.add_to_hass(hass)
+
+    fake_now = datetime(2026, 1, 2, 12, 0, tzinfo=UTC)
+    with (
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI") as mock_api_class,
+        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
+        patch("custom_components.electric_ireland_insights.coordinator.dt_now", return_value=fake_now),
+    ):
+        mock_api_instance = AsyncMock()
+        _setup_api_mock(
+            mock_api_instance,
+            bill_periods=[{"startDate": "2026-01-01T00:00:00Z", "endDate": "2026-01-01T00:00:00Z"}],
+            hourly_return=[],
+        )
+        mock_api_class.return_value = mock_api_instance
+
+        from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
+
+        coordinator = ElectricIrelandCoordinator(hass, entry)
+        await coordinator.async_tariff_backfill(full_history=True)
+
+    assert entry.data.get("import_full_history") is False
+    assert entry.data.get("tariff_stats_initialized") is not True
+
+
+async def test_bill_period_cache_cleared_on_meter_id_rediscovery(recorder_mock, hass, mock_config_entry):
+    """Cached bill periods must be invalidated when meter IDs are rediscovered."""
+    mock_config_entry.add_to_hass(hass)
+
+    discovered_ids = {"partner": "P2", "contract": "C2", "premise": "PR2"}
+
+    fake_now = datetime(2026, 1, 2, 12, 0, tzinfo=UTC)
+    with (
+        patch(
+            "custom_components.electric_ireland_insights.coordinator.get_last_statistics",
+            return_value={},
+        ),
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI") as mock_api_class,
+        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
+        patch("custom_components.electric_ireland_insights.coordinator.dt_now", return_value=fake_now),
+    ):
+        mock_api_instance = AsyncMock()
+        _setup_api_mock(
+            mock_api_instance,
+            authenticate_return=(discovered_ids, discovered_ids),
+            bill_periods=[{"startDate": "2026-01-01T00:00:00Z", "endDate": "2026-01-01T00:00:00Z"}],
+            hourly_return=[],
+        )
+        mock_api_class.return_value = mock_api_instance
+
+        from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
+
+        coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
+        coordinator._bill_periods = [{"startDate": "2025-01-01T00:00:00Z", "endDate": "2025-01-01T00:00:00Z"}]
+        coordinator._bill_periods_fetched_at = utcnow()
+
+        await coordinator._async_update_data()
+
+        assert coordinator._bill_periods == []
+        assert coordinator._bill_periods_fetched_at is None
+        assert mock_config_entry.data.get("partner_id") == "P2"
+
+
+async def test_backfill_unexpected_error_creates_repair_issue(recorder_mock, hass):
+    """Backfill unexpected exception must create a repair issue."""
+    entry = MockConfigEntry(
+        domain="electric_ireland_insights",
+        data={
+            "username": "test@test.com",
+            "password": "testpass",
+            "account_number": ACCOUNT,
+        },
+        unique_id=ACCOUNT_HASH,
+    )
+    entry.add_to_hass(hass)
+
+    with (
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI") as mock_api_class,
+        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
+    ):
+        mock_api_instance = AsyncMock()
+        _setup_api_mock(mock_api_instance, authenticate_side_effect=RuntimeError("boom"))
+        mock_api_class.return_value = mock_api_instance
+
+        from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
+
+        coordinator = ElectricIrelandCoordinator(hass, entry)
+        with pytest.raises(RuntimeError, match="boom"):
+            await coordinator.async_tariff_backfill()
+
+    issue_registry = async_get_issue_registry(hass)
+    assert issue_registry.async_get_issue(DOMAIN, f"backfill_failed_{ACCOUNT_HASH}") is not None
 
 
 async def test_close_session_awaits_awaitable_close() -> None:

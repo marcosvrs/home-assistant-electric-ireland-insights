@@ -61,10 +61,10 @@ After setup, add the imported statistics to the Energy Dashboard:
 
 1. Go to **Settings → Dashboards → Energy**.
 2. Under **Grid consumption**, click **Add consumption**.
-3. Search for and select `Electric Ireland Consumption ({account})`.
+3. Search for and select `Electric Ireland Consumption ({account_hash})`.
 4. For **Use an entity tracking the total costs**, select:
-   - `Electric Ireland Cost ({account})` for the gross cost as reported by Electric Ireland, or
-   - `Electric Ireland Cost Discounted ({account})` if you configured a discount percentage and want the cost to reflect your billed amount more closely.
+   - `Electric Ireland Cost ({account_hash})` for the gross cost as reported by Electric Ireland, or
+   - `Electric Ireland Cost Discounted ({account_hash})` if you configured a discount percentage and want the cost to reflect your billed amount more closely.
 
 For per-tariff breakdown (stacked colored bars by time-of-use), see the [per-tariff setup](#setting-up-the-energy-dashboard-with-per-tariff-breakdown) section below.
 
@@ -95,9 +95,11 @@ The integration imports data as **external statistics** directly into the HA rec
 
 | Statistic ID | Description | Unit |
 |---|---|---|
-| `electric_ireland_insights:{account}_consumption` | Hourly electricity consumption (total) | kWh |
-| `electric_ireland_insights:{account}_cost` | Hourly electricity cost (gross with VAT, no standing charge) | EUR |
-| `electric_ireland_insights:{account}_cost_discounted` | Hourly electricity cost with your configured discount applied (only created when discount > 0) | EUR |
+| `electric_ireland_insights:{account_hash}_consumption` | Hourly electricity consumption (total) | kWh |
+| `electric_ireland_insights:{account_hash}_cost` | Hourly electricity cost (gross with VAT, no standing charge) | EUR |
+| `electric_ireland_insights:{account_hash}_cost_discounted` | Hourly electricity cost with your configured discount applied (only created when discount > 0) | EUR |
+
+`{account_hash}` is the first 16 characters of the SHA-256 hash of your account number. The raw account number is not used in HA-facing identifiers.
 
 ### Per-tariff breakdown
 
@@ -105,18 +107,18 @@ When the current data window contains time-of-use tariff buckets, the integratio
 
 | Statistic ID | Description | Unit |
 |---|---|---|
-| `electric_ireland_insights:{account}_consumption_off_peak` | Off-peak consumption | kWh |
-| `electric_ireland_insights:{account}_consumption_mid_peak` | Mid-peak consumption | kWh |
-| `electric_ireland_insights:{account}_consumption_on_peak` | On-peak consumption | kWh |
-| `electric_ireland_insights:{account}_consumption_flat_rate` | Flat-rate consumption from hours tagged as flat rate within a smart tariff plan | kWh |
-| `electric_ireland_insights:{account}_cost_off_peak` | Off-peak cost (gross) | EUR |
-| `electric_ireland_insights:{account}_cost_mid_peak` | Mid-peak cost (gross) | EUR |
-| `electric_ireland_insights:{account}_cost_on_peak` | On-peak cost (gross) | EUR |
-| `electric_ireland_insights:{account}_cost_flat_rate` | Flat-rate cost from hours tagged as flat rate within a smart tariff plan (gross) | EUR |
-| `electric_ireland_insights:{account}_cost_off_peak_discounted` | Off-peak cost with discount applied (only created when discount > 0) | EUR |
-| `electric_ireland_insights:{account}_cost_mid_peak_discounted` | Mid-peak cost with discount applied (only created when discount > 0) | EUR |
-| `electric_ireland_insights:{account}_cost_on_peak_discounted` | On-peak cost with discount applied (only created when discount > 0) | EUR |
-| `electric_ireland_insights:{account}_cost_flat_rate_discounted` | Flat-rate cost with discount applied (only created when discount > 0) | EUR |
+| `electric_ireland_insights:{account_hash}_consumption_off_peak` | Off-peak consumption | kWh |
+| `electric_ireland_insights:{account_hash}_consumption_mid_peak` | Mid-peak consumption | kWh |
+| `electric_ireland_insights:{account_hash}_consumption_on_peak` | On-peak consumption | kWh |
+| `electric_ireland_insights:{account_hash}_consumption_flat_rate` | Flat-rate consumption from hours tagged as flat rate within a smart tariff plan | kWh |
+| `electric_ireland_insights:{account_hash}_cost_off_peak` | Off-peak cost (gross) | EUR |
+| `electric_ireland_insights:{account_hash}_cost_mid_peak` | Mid-peak cost (gross) | EUR |
+| `electric_ireland_insights:{account_hash}_cost_on_peak` | On-peak cost (gross) | EUR |
+| `electric_ireland_insights:{account_hash}_cost_flat_rate` | Flat-rate cost from hours tagged as flat rate within a smart tariff plan (gross) | EUR |
+| `electric_ireland_insights:{account_hash}_cost_off_peak_discounted` | Off-peak cost with discount applied (only created when discount > 0) | EUR |
+| `electric_ireland_insights:{account_hash}_cost_mid_peak_discounted` | Mid-peak cost with discount applied (only created when discount > 0) | EUR |
+| `electric_ireland_insights:{account_hash}_cost_on_peak_discounted` | On-peak cost with discount applied (only created when discount > 0) | EUR |
+| `electric_ireland_insights:{account_hash}_cost_flat_rate_discounted` | Flat-rate cost with discount applied (only created when discount > 0) | EUR |
 
 - Per-tariff statistics are created **only when the current data window contains at least one non-flat bucket** (off-peak, mid-peak, or on-peak). The integration evaluates this on every poll — it does not permanently label an account as "smart" or "flat rate".
 - If you're on a **flat-rate** tariff (only `flat_rate` buckets appear in the current window), per-tariff statistics are not created (they would be identical to the totals).
@@ -131,8 +133,8 @@ To see stacked colored bars showing consumption broken down by tariff:
 1. Go to **Settings → Dashboards → Energy**.
 2. Under **Grid consumption**, click **Add consumption**.
 3. Search for and add each per-tariff consumption statistic that the integration created for your account. The available tariff buckets depend on your plan and may include off-peak, mid-peak, on-peak, or flat-rate.
-4. For each consumption statistic, select the matching cost statistic (e.g., `Electric Ireland Cost Off-Peak ({account})` for the off-peak consumption entry). If you configured a discount, use the `_discounted` cost statistic (e.g., `Electric Ireland Cost Off-Peak Discounted ({account})`) to match your billed amount more closely.
-5. **Remove** the original aggregate `Electric Ireland Consumption ({account})` entry to avoid double-counting.
+4. For each consumption statistic, select the matching cost statistic (e.g., `Electric Ireland Cost Off-Peak ({account_hash})` for the off-peak consumption entry). If you configured a discount, use the `_discounted` cost statistic (e.g., `Electric Ireland Cost Off-Peak Discounted ({account_hash})`) to match your billed amount more closely.
+5. **Remove** the original aggregate `Electric Ireland Consumption ({account_hash})` entry to avoid double-counting.
 
 The Energy Dashboard will now display separate colored bars per hour/day for each tariff bucket.
 
@@ -140,7 +142,7 @@ The Energy Dashboard will now display separate colored bars per hour/day for eac
 
 ## Diagnostic entities
 
-Two diagnostic sensor entities are created under the integration's device. Entity IDs include the account number (e.g., `sensor.electric_ireland_insights_123456789_last_import_time`). In multi-account setups, each account has its own set of diagnostic sensors.
+Two diagnostic sensor entities are created under the integration's device. Entity IDs include the account hash (e.g., `sensor.electric_ireland_insights_<account_hash>_last_import_time`). In multi-account setups, each account has its own set of diagnostic sensors.
 
 | Entity | Description |
 |--------|-------------|
@@ -206,19 +208,19 @@ automation:
 
 > **Note**: The Data Freshness sensor is disabled by default. Enable it first in **Settings → Devices & services → Electric Ireland Insights → device → entities**.
 
-Replace `ACCOUNT` below with your account number (e.g., `123456789`):
+Replace `<account_hash>` below with your account hash (the first 16 characters of the SHA-256 hash of your account number):
 
 ```yaml
 automation:
   - alias: "Alert: Electric Ireland data stale"
     triggers:
       - trigger: numeric_state
-        entity_id: sensor.electric_ireland_insights_ACCOUNT_data_freshness
+        entity_id: sensor.electric_ireland_insights_<account_hash>_data_freshness
         above: 5
     actions:
       - action: notify.mobile_app
         data:
-          message: "Electric Ireland data is {{ states('sensor.electric_ireland_insights_ACCOUNT_data_freshness') }} days old."
+          message: "Electric Ireland data is {{ states('sensor.electric_ireland_insights_<account_hash>_data_freshness') }} days old."
 ```
 
 ## Known limitations

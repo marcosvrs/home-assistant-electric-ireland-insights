@@ -49,6 +49,7 @@ async def test_user_flow_success(recorder_mock, hass, enable_custom_integrations
             {"import_full_history": False, "discount_percentage": 15},
         )
         assert result3["type"] == FlowResultType.CREATE_ENTRY
+        assert result3["title"] == f"Electric Ireland Insights (Unofficial) ({ACCOUNT_HASH})"
         assert result3["data"]["account_number"] == "100000001"
         assert result3["data"]["partner_id"] == "p1"
         assert result3["data"]["contract_id"] == "c1"

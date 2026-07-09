@@ -1,2 +1,2 @@
 beautifulsoup4~=4.14.3
-homeassistant~=2026.3.4
+homeassistant>=2026.3.4,<2026.4.0

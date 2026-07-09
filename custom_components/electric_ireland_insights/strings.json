@@ -96,6 +96,18 @@
     "data_gap": {
       "title": "No new energy data for {days} days",
       "description": "Account {account} has not received new energy data for {days} days. This typically happens when ESB meter reads are delayed. The integration will automatically resume importing when data becomes available."
+    },
+    "backfill_auth_failed": {
+      "title": "Historical import failed: authentication",
+      "description": "Authentication failed while importing historical data for account {account}. Use Reconfigure to update your credentials, or wait for the next automatic refresh."
+    },
+    "backfill_connection_failed": {
+      "title": "Historical import failed: connection",
+      "description": "Could not connect to Electric Ireland while importing historical data for account {account}. The integration will retry automatically."
+    },
+    "backfill_failed": {
+      "title": "Historical import failed",
+      "description": "An unexpected error occurred while importing historical data for account {account}. Check logs for details."
     }
   }
 }

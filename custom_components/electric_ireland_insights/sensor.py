@@ -98,7 +98,7 @@ class ElectricIrelandDiagnosticSensor(CoordinatorEntity[ElectricIrelandCoordinat
         self._attr_entity_registry_enabled_default = False
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, account_hash)},
-            name=f"Electric Ireland Insights ({account_number})",
+            name=f"Electric Ireland Insights ({account_hash})",
             manufacturer="Electric Ireland",
             model="Insights Portal",
             serial_number=account_hash,

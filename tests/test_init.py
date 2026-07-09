@@ -175,3 +175,32 @@ async def test_setup_entry_version_one_without_migration(recorder_mock, hass, en
 
     assert entry.version == 1
     assert "Migrating Electric Ireland entry" not in caplog.text
+
+
+async def test_setup_entry_closes_session_on_first_refresh_failure(recorder_mock, hass, enable_custom_integrations, mock_config_entry):
+    """If first refresh fails, the coordinator session must be closed before the exception propagates."""
+    from custom_components.electric_ireland_insights.exceptions import CannotConnect
+
+    mock_config_entry.add_to_hass(hass)
+    mock_session = AsyncMock()
+    with (
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI") as mock_api_class,
+        patch(
+            "custom_components.electric_ireland_insights.coordinator.async_create_clientsession",
+            return_value=mock_session,
+        ),
+        patch(
+            "custom_components.electric_ireland_insights.coordinator.get_last_statistics",
+            return_value={},
+        ),
+    ):
+        mock_api_instance = AsyncMock()
+        mock_api_instance.authenticate = AsyncMock(side_effect=CannotConnect("timeout"))
+        mock_api_class.return_value = mock_api_instance
+
+        await hass.config_entries.async_setup(mock_config_entry.entry_id)
+        await hass.async_block_till_done()
+
+        assert mock_config_entry.state == ConfigEntryState.SETUP_RETRY
+        assert mock_api_instance.get_hourly_usage.call_count == 0
+        assert mock_session.close.called

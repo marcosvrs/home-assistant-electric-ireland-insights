@@ -9,6 +9,7 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/marcosvrs/home-assistant-electric-ireland-insights/issues",
   "loggers": ["electric_ireland_insights"],
+  "quality_scale": "bronze",
   "requirements": [
     "beautifulsoup4~=4.14.3"
   ],
