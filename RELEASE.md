@@ -58,3 +58,11 @@ For every stable release, record:
 - GitHub Actions run URL
 - Date/time the run completed
 - Confirmation that all required jobs passed
+
+### v1.0.0
+
+- **Release tag:** `v1.0.0` (pending)
+- **Exact commit SHA:** `4c8cae1fecf1397caa180206f1ecf0a31f4c1772`
+- **GitHub Actions run URL:** https://github.com/marcosvrs/home-assistant-electric-ireland-insights/actions/runs/29023173737
+- **Date/time completed:** 2026-07-09 UTC
+- **Status:** All required jobs passed (validate-hassfest, validate-hacs, ruff, mypy, tests)
