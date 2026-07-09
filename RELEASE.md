@@ -61,8 +61,8 @@ For every stable release, record:
 
 ### v1.0.0
 
-- **Release tag:** `v1.0.0` (pending)
-- **Exact commit SHA:** `4c8cae1fecf1397caa180206f1ecf0a31f4c1772`
-- **GitHub Actions run URL:** https://github.com/marcosvrs/home-assistant-electric-ireland-insights/actions/runs/29023173737
+- **Release tag:** `v1.0.0`
+- **Exact commit SHA:** `e268f3525b319354412c92402a9c89ef64b65a4b`
+- **GitHub Actions run URL:** https://github.com/marcosvrs/home-assistant-electric-ireland-insights/actions/runs/29023403557
 - **Date/time completed:** 2026-07-09 UTC
 - **Status:** All required jobs passed (validate-hassfest, validate-hacs, ruff, mypy, tests)
