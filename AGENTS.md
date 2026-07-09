@@ -327,10 +327,10 @@ async_add_external_statistics(hass, metadata, statistics)
 class MyEntity(CoordinatorEntity[MyCoordinator], SensorEntity):
     _attr_has_entity_name = True
 
-    def __init__(self, coordinator: MyCoordinator) -> None:
+    def __init__(self, coordinator: MyCoordinator, account_hash: str) -> None:
         super().__init__(coordinator)
-        self._attr_unique_id = f"{DOMAIN}_{account}_{key}"
-        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, account)}, name="...", entry_type=DeviceEntryType.SERVICE)
+        self._attr_unique_id = f"{DOMAIN}_{account_hash}_{key}"
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, account_hash)}, name="...", entry_type=DeviceEntryType.SERVICE)
 ```
 
 ### Config Flow Pattern (Required)

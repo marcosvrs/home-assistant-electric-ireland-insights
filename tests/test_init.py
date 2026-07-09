@@ -177,7 +177,9 @@ async def test_setup_entry_version_one_without_migration(recorder_mock, hass, en
     assert "Migrating Electric Ireland entry" not in caplog.text
 
 
-async def test_setup_entry_closes_session_on_first_refresh_failure(recorder_mock, hass, enable_custom_integrations, mock_config_entry):
+async def test_setup_entry_closes_session_on_first_refresh_failure(
+    recorder_mock, hass, enable_custom_integrations, mock_config_entry
+):
     """If first refresh fails, the coordinator session must be closed before the exception propagates."""
     from custom_components.electric_ireland_insights.exceptions import CannotConnect
 
@@ -204,3 +206,55 @@ async def test_setup_entry_closes_session_on_first_refresh_failure(recorder_mock
         assert mock_config_entry.state == ConfigEntryState.SETUP_RETRY
         assert mock_api_instance.get_hourly_usage.call_count == 0
         assert mock_session.close.called
+
+
+async def test_unload_entry_closes_session_after_platforms(
+    recorder_mock, hass, enable_custom_integrations, mock_config_entry
+):
+    """async_unload_entry must unload platforms before closing the coordinator session."""
+    mock_config_entry.add_to_hass(hass)
+    with (
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI") as mock_api_class,
+        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
+        patch(
+            "custom_components.electric_ireland_insights.coordinator.get_last_statistics",
+            return_value={},
+        ),
+    ):
+        mock_api_instance = AsyncMock()
+        mock_api_instance.authenticate = AsyncMock(return_value=(TEST_METER_IDS, TEST_METER_IDS))
+        mock_api_instance.get_bill_periods = AsyncMock(return_value=[])
+        mock_api_instance.get_hourly_usage = AsyncMock(return_value=[])
+        mock_api_class.return_value = mock_api_instance
+
+        await hass.config_entries.async_setup(mock_config_entry.entry_id)
+        await hass.async_block_till_done()
+
+        assert mock_config_entry.state == ConfigEntryState.LOADED
+
+        coordinator = mock_config_entry.runtime_data
+        original_close = coordinator.async_close
+        order: list[str] = []
+
+        async def tracking_close() -> None:
+            order.append("close")
+            await original_close()
+
+        coordinator.async_close = tracking_close
+
+        with patch.object(
+            hass.config_entries,
+            "async_unload_platforms",
+            new_callable=AsyncMock,
+        ) as mock_unload:
+            async def tracking_unload(*args, **kwargs):
+                order.append("unload")
+                return True
+
+            mock_unload.side_effect = tracking_unload
+
+            result = await hass.config_entries.async_unload(mock_config_entry.entry_id)
+            await hass.async_block_till_done()
+
+        assert result is True
+        assert order == ["unload", "close"]

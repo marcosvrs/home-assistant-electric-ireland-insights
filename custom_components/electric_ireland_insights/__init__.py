@@ -68,5 +68,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ElectricIrelandConfigEn
         "Unloading Electric Ireland entry, account=%s",
         _redact_id(entry.data["account_number"]),
     )
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     await entry.runtime_data.async_close()
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    return unload_ok

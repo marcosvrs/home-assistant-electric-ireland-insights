@@ -183,7 +183,7 @@ The integration fires an event after each successful data import:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `account` | string | Account number |
+| `account` | string | Account hash (first 16 characters of the SHA-256 hash of the account number) |
 | `datapoint_count` | integer | Number of hourly datapoints fetched in this update (includes re-fetched overlap days, not just new data) |
 | `latest_data_timestamp` | string or null | ISO 8601 timestamp of the newest datapoint, or null if no data was available |
 | `tariff_buckets` | list of strings | Sorted list of tariff bucket names seen (e.g., `["mid_peak", "off_peak", "on_peak"]`) |

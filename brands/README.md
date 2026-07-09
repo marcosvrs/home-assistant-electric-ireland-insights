@@ -8,6 +8,12 @@ The integration icon uses the Electric Ireland brand mark for identification pur
 
 ## Files
 
+The root-level brand assets have been removed. The canonical assets live in:
+
+```
+custom_components/electric_ireland_insights/brand/
+```
+
 | File | Size | Description |
 |------|------|-------------|
 | `icon.png` | 256×256 px | Integration icon |

@@ -2,6 +2,6 @@
   "name": "Electric Ireland Insights for Home Assistant (Unofficial)",
   "country": "IE",
   "zip_release": false,
-  "homeassistant": "2026.3.4",
+  "homeassistant": "2026.3.0",
   "hacs": "2.0.0"
 }

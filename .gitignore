@@ -55,6 +55,9 @@ opencode.json
 # Local capture tooling — development only, never ship
 scripts/mitm/
 
+# Local HA core clone used for validation tooling
+tmp-ha-core/
+
 # Project
 pr-description.md
 

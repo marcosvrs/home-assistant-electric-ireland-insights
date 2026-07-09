@@ -214,6 +214,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                 dates_to_fetch = all_lookback_dates
 
             datapoints: list[ElectricIrelandDatapoint] = []
+            failed_dates: list[date] = []
             for target_date in sorted(dates_to_fetch):  # SEQUENTIAL — never parallel
                 try:
                     day_data = await self._api.get_hourly_usage(
@@ -222,6 +223,12 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                         target_date,
                     )
                     datapoints.extend(day_data)
+                except CannotConnect:
+                    _LOGGER.warning(
+                        "Failed to fetch hourly usage for %s (transient connection error), will retry on next poll",
+                        target_date,
+                    )
+                    failed_dates.append(target_date)
                 except CachedIdsInvalid:
                     _LOGGER.warning(
                         "Cached meter IDs failed during data fetch, re-authenticating",
@@ -250,6 +257,11 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                         target_date,
                     )
                     datapoints.extend(day_data)
+
+            if failed_dates and not datapoints:
+                raise CannotConnect(
+                    f"All {len(failed_dates)} lookback day(s) failed with connection errors"
+                )
 
             if not datapoints:
                 if self._has_imported_before:
@@ -390,11 +402,48 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
         try:
             try:
                 meter_ids, _ = await self._api.authenticate(session, None)
-            except InvalidAuth as err:
-                raise ConfigEntryAuthFailed from err
+            except InvalidAuth:
+                _LOGGER.warning("Background backfill failed due to invalid auth")
+                async_create_issue(
+                    self.hass,
+                    DOMAIN,
+                    f"backfill_auth_failed_{self._account_hash}",
+                    is_fixable=False,
+                    severity=IssueSeverity.ERROR,
+                    translation_key="backfill_auth_failed",
+                    translation_placeholders={"account": self._account_hash},
+                )
+                return
+            except CannotConnect:
+                _LOGGER.warning("Background backfill failed due to connection error")
+                async_create_issue(
+                    self.hass,
+                    DOMAIN,
+                    f"backfill_connection_failed_{self._account_hash}",
+                    is_fixable=False,
+                    severity=IssueSeverity.WARNING,
+                    translation_key="backfill_connection_failed",
+                    translation_placeholders={"account": self._account_hash},
+                )
+                return
 
             if full_history:
-                bill_periods = await self._api.get_bill_periods(session, meter_ids)
+                try:
+                    bill_periods = await self._api.get_bill_periods(session, meter_ids)
+                except CannotConnect:
+                    _LOGGER.warning(
+                        "Full history backfill: cannot fetch bill periods, will retry"
+                    )
+                    async_create_issue(
+                        self.hass,
+                        DOMAIN,
+                        f"backfill_connection_failed_{self._account_hash}",
+                        is_fixable=False,
+                        severity=IssueSeverity.WARNING,
+                        translation_key="backfill_connection_failed",
+                        translation_placeholders={"account": self._account_hash},
+                    )
+                    return
                 if not bill_periods:
                     _LOGGER.warning("Full history requested but no bill periods available; will retry")
                     return
@@ -426,14 +475,37 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
             dates = sorted(all_dates)
 
             datapoints: list[ElectricIrelandDatapoint] = []
+            failed_dates: list[date] = []
             for target_date in dates:
                 try:
                     day_data = await self._api.get_hourly_usage(session, meter_ids, target_date)
                     datapoints.extend(day_data)
+                except CannotConnect:
+                    _LOGGER.warning(
+                        "Backfill: failed to fetch hourly usage for %s (transient connection error)",
+                        target_date,
+                    )
+                    failed_dates.append(target_date)
                 except CachedIdsInvalid:
                     _LOGGER.debug("Backfill: CachedIdsInvalid on %s, re-authenticating", target_date)
                     session.cookie_jar.clear()
-                    meter_ids, _ = await self._api.authenticate(session, None)
+                    try:
+                        meter_ids, _ = await self._api.authenticate(session, None)
+                    except (InvalidAuth, CannotConnect):
+                        _LOGGER.warning(
+                            "Backfill: re-authentication failed on %s, aborting backfill",
+                            target_date,
+                        )
+                        async_create_issue(
+                            self.hass,
+                            DOMAIN,
+                            f"backfill_auth_failed_{self._account_hash}",
+                            is_fixable=False,
+                            severity=IssueSeverity.ERROR,
+                            translation_key="backfill_auth_failed",
+                            translation_placeholders={"account": self._account_hash},
+                        )
+                        return
                     day_data = await self._api.get_hourly_usage(session, meter_ids, target_date)
                     datapoints.extend(day_data)
 
@@ -472,38 +544,23 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
             new_data = {**dict(self._config_entry.data)}
             if datapoints:
                 new_data["tariff_stats_initialized"] = True
-            if full_history:
+            if full_history and (datapoints or not failed_dates):
+                # Preserve the retry flag only when every day failed with a
+                # transient error, so a later backfill can attempt the missing
+                # history again.
                 new_data["import_full_history"] = False
             self.hass.config_entries.async_update_entry(self._config_entry, data=new_data)
-            _LOGGER.info("Background backfill complete (%d datapoints)", len(datapoints))
+            if failed_dates:
+                _LOGGER.warning(
+                    "Background backfill completed with %d failed day(s)",
+                    len(failed_dates),
+                )
+            else:
+                _LOGGER.info("Background backfill complete (%d datapoints)", len(datapoints))
             async_delete_issue(self.hass, DOMAIN, f"backfill_auth_failed_{self._account_hash}")
             async_delete_issue(self.hass, DOMAIN, f"backfill_connection_failed_{self._account_hash}")
             async_delete_issue(self.hass, DOMAIN, f"backfill_failed_{self._account_hash}")
 
-        except InvalidAuth as err:
-            _LOGGER.warning("Background backfill failed due to invalid auth")
-            async_create_issue(
-                self.hass,
-                DOMAIN,
-                f"backfill_auth_failed_{self._account_hash}",
-                is_fixable=False,
-                severity=IssueSeverity.ERROR,
-                translation_key="backfill_auth_failed",
-                translation_placeholders={"account": self._account_hash},
-            )
-            raise ConfigEntryAuthFailed from err
-        except CannotConnect as err:
-            _LOGGER.warning("Background backfill failed due to connection error")
-            async_create_issue(
-                self.hass,
-                DOMAIN,
-                f"backfill_connection_failed_{self._account_hash}",
-                is_fixable=False,
-                severity=IssueSeverity.WARNING,
-                translation_key="backfill_connection_failed",
-                translation_placeholders={"account": self._account_hash},
-            )
-            raise
         except Exception:
             _LOGGER.exception("Unexpected error during background backfill")
             async_create_issue(
@@ -515,7 +572,6 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                 translation_key="backfill_failed",
                 translation_placeholders={"account": self._account_hash},
             )
-            raise
         finally:
             await _close_session(session)
 
