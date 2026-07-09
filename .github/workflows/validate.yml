@@ -40,6 +40,8 @@ jobs:
         run: pip install "ruff==0.15.20"
       - name: Ruff check
         run: python -m ruff check custom_components/ tests/
+      - name: Ruff format diff
+        run: python -m ruff format --diff custom_components/electric_ireland_insights/coordinator.py tests/test_init.py || true
       - name: Ruff format check
         run: python -m ruff format --check custom_components/ tests/
 
