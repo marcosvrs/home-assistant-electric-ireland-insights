@@ -49,6 +49,12 @@ ruff format --check custom_components/ tests/
 
 Local tool absence does not override the Git Actions release gate.
 
+## Migration / Schema Compatibility
+
+For the `v1.0.0` stable release, the integration changed Home Assistant-facing identifiers from the raw account number to a SHA-256 hash of the account number, and the config entry stores additional meter identifiers (`partner_id`, `contract_id`, `premise_id`).
+
+No `async_migrate_entry` hook is provided for `v1.0.0` because the pre-1.0 tags (`v0.0.1` through `v0.2.3`) were early development/pre-release artifacts with no confirmed public installations. If you are upgrading from a pre-1.0 version, remove the existing config entry and add it again rather than expecting an automatic migration.
+
 ## Release Evidence
 
 For every stable release, record:
@@ -62,7 +68,7 @@ For every stable release, record:
 ### v1.0.0
 
 - **Release tag:** `v1.0.0`
-- **Exact commit SHA:** `e268f3525b319354412c92402a9c89ef64b65a4b`
-- **GitHub Actions run URL:** https://github.com/marcosvrs/home-assistant-electric-ireland-insights/actions/runs/29023403557
-- **Date/time completed:** 2026-07-09 UTC
+- **Exact commit SHA:** `53bb71976b294e0f1981c8b9b337937a305e38e0`
+- **GitHub Actions run URL:** https://github.com/marcosvrs/home-assistant-electric-ireland-insights/actions/runs/29024218197
+- **Date/time completed:** 2026-07-09 14:11 UTC
 - **Status:** All required jobs passed (validate-hassfest, validate-hacs, ruff, mypy, tests)

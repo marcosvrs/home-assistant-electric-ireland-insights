@@ -30,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Coordinator session is closed when setup fails before unload.
 - Bill-period cache is invalidated when meter identifiers are rediscovered.
 
+### Migration note
+
+This release changes Home Assistant-facing identifiers from raw account numbers to SHA-256 hashes and adds cached meter identifiers to the config entry. No automatic migration is provided because the pre-1.0 tags had no confirmed public installations. Users coming from a pre-1.0 version should remove and re-add the integration.
+
 ### Known limitations
 
 - Data is published by ESB with a 1–3 day delay.
