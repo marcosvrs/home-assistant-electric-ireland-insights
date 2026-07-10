@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 from homeassistant.components.sensor import SensorDeviceClass
-from homeassistant.const import EntityCategory
+from homeassistant.const import EntityCategory, UnitOfTime
 
 from custom_components.electric_ireland_insights.const import hash_account_id
 from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
@@ -109,6 +109,12 @@ async def test_device_classes(hass, enable_custom_integrations, mock_config_entr
     freshness_desc = next(d for d in DIAGNOSTIC_SENSORS if d.key == "data_freshness_days")
     assert last_import_desc.device_class == SensorDeviceClass.TIMESTAMP
     assert freshness_desc.device_class == SensorDeviceClass.DURATION
+
+
+async def test_data_freshness_unit_is_days(hass, enable_custom_integrations, mock_config_entry):
+    """Duration sensor must use Home Assistant's canonical UnitOfTime.DAYS ('d')."""
+    freshness_desc = next(d for d in DIAGNOSTIC_SENSORS if d.key == "data_freshness_days")
+    assert freshness_desc.native_unit_of_measurement == UnitOfTime.DAYS
 
 
 async def test_device_info_has_account(hass, enable_custom_integrations, mock_config_entry):

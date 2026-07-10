@@ -12,7 +12,7 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorEntityDescription,
 )
-from homeassistant.const import EntityCategory
+from homeassistant.const import EntityCategory, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -47,7 +47,7 @@ DIAGNOSTIC_SENSORS: tuple[ElectricIrelandSensorDescription, ...] = (
         translation_key="data_freshness_days",
         device_class=SensorDeviceClass.DURATION,
         entity_category=EntityCategory.DIAGNOSTIC,
-        native_unit_of_measurement="days",
+        native_unit_of_measurement=UnitOfTime.DAYS,
         value_fn=lambda data: _calc_freshness(data),
     ),
 )
