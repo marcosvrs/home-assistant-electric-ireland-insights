@@ -136,6 +136,8 @@ This is the first announced stable release of Electric Ireland Insights. The cur
 
 * **1-3 day data delay**: Hourly meter readings are published by ESB with a 1-3 day delay. This integration cannot fetch data faster than ESB publishes it.
 * **Discount applies to future `_cost_discounted` data only by default**: Changing the discount percentage in **Options** affects only newly fetched or re-fetched `_cost_discounted` data (the last 4 days on each poll). The `_cost` statistic always remains gross. To recalculate all historical `_cost_discounted` data with a new discount, update the option and then use **Reconfigure → Import full history**. Standing charges and levies are never included.
+* **DST transition gap**: Spring-forward and fall-back day behavior has not yet been verified with real Electric Ireland capture fixtures.
+* **Single account per entry**: Each config entry supports one electricity account. To monitor multiple accounts, add the integration once per account.
 * **Scraping dependency**: The integration authenticates via the Electric Ireland web portal. Changes to the portal's HTML structure may break the login flow until the integration is updated.
 
 ## Acknowledgements

@@ -80,8 +80,7 @@ Imported statistics remain in the Home Assistant recorder after removal. To also
 
 The integration fetches data from the Electric Ireland portal **every 3 hours**.
 
-- **First install**: the initial setup fetches up to **30 days** of data (this may take a few minutes as each day requires a separate request to the Electric Ireland portal).
-- **Full history**: full history is enabled by default during setup. To import all available historical data again later (typically 6–13 months), go to **Reconfigure** and check **Import full history**. This runs as a background task without blocking Home Assistant, typically taking 10–30 minutes.
+- **First install**: the initial setup fetches up to **30 days** of data immediately. At the same time, **full history** is enabled by default and runs as a background task that imports all available historical data (typically 6–13 months) without blocking Home Assistant. This background import may take 10–30 minutes. If you only want the last 30 days now, uncheck **Import full history** during setup; you can still import the full history later via **Reconfigure**.
 - **Subsequent runs**: fetches up to the last **4 days**, limited to dates within known billing periods, to pick up newly published readings. Dates outside any billing period are skipped.
 - **Pre-flight optimization**: the integration periodically queries billing period boundaries (cached for 24 hours) to identify which dates contain meter data, reducing unnecessary API calls. If the query fails entirely (no cached data available), the integration falls back to the full lookback window.
 - **Provider delay**: Electric Ireland publishes meter data with a **1–3 day delay** (data comes from ESB). The Data Freshness diagnostic sensor shows how old the latest available reading is (see [Diagnostic entities](#diagnostic-entities)).
