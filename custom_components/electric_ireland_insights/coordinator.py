@@ -452,12 +452,23 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
             yesterday = (dt_now() - timedelta(days=1)).date()
 
             if bill_periods:
-                earliest = min(date.fromisoformat(bp["startDate"][:10]) for bp in bill_periods)
-                all_dates: set[date] = set()
-                d = earliest
-                while d <= yesterday:
-                    all_dates.add(d)
-                    d += timedelta(days=1)
+                dates_in_periods: set[date] = set()
+                for period in bill_periods:
+                    period_start = date.fromisoformat(period["startDate"][:10])
+                    period_end = date.fromisoformat(period["endDate"][:10])
+                    if period_start > yesterday:
+                        continue
+                    period_end = min(period_end, yesterday)
+                    d = period_start
+                    while d <= period_end:
+                        dates_in_periods.add(d)
+                        d += timedelta(days=1)
+
+                if full_history:
+                    all_dates = dates_in_periods
+                else:
+                    all_lookback_dates = {yesterday - timedelta(days=i) for i in range(INITIAL_LOOKBACK_DAYS)}
+                    all_dates = dates_in_periods & all_lookback_dates
             else:
                 all_dates = {yesterday - timedelta(days=i) for i in range(INITIAL_LOOKBACK_DAYS)}
 
@@ -540,21 +551,27 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
             new_data = {**dict(self._config_entry.data)}
             if datapoints:
                 new_data["tariff_stats_initialized"] = True
-            if full_history and (datapoints or not failed_dates):
-                # Preserve the retry flag only when every day failed with a
-                # transient error, so a later backfill can attempt the missing
-                # history again.
+            if full_history and not failed_dates:
                 new_data["import_full_history"] = False
             self.hass.config_entries.async_update_entry(self._config_entry, data=new_data)
+            async_delete_issue(self.hass, DOMAIN, f"backfill_auth_failed_{self._account_hash}")
             if failed_dates:
                 _LOGGER.warning(
                     "Background backfill completed with %d failed day(s)",
                     len(failed_dates),
                 )
+                async_create_issue(
+                    self.hass,
+                    DOMAIN,
+                    f"backfill_connection_failed_{self._account_hash}",
+                    is_fixable=False,
+                    severity=IssueSeverity.WARNING,
+                    translation_key="backfill_connection_failed",
+                    translation_placeholders={"account": self._account_hash},
+                )
             else:
                 _LOGGER.info("Background backfill complete (%d datapoints)", len(datapoints))
-            async_delete_issue(self.hass, DOMAIN, f"backfill_auth_failed_{self._account_hash}")
-            async_delete_issue(self.hass, DOMAIN, f"backfill_connection_failed_{self._account_hash}")
+                async_delete_issue(self.hass, DOMAIN, f"backfill_connection_failed_{self._account_hash}")
             async_delete_issue(self.hass, DOMAIN, f"backfill_failed_{self._account_hash}")
 
         except Exception:

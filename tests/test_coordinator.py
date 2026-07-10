@@ -1,7 +1,7 @@
 """Tests for the Electric Ireland coordinator."""
 
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -2971,6 +2971,8 @@ async def test_backfill_tolerates_per_day_cannot_connect(recorder_mock, hass):
 
 async def test_full_history_backfill_tolerates_per_day_cannot_connect(recorder_mock, hass):
     """A transient CannotConnect during full-history backfill must not abort the batch."""
+    from homeassistant.helpers.issue_registry import async_get as async_get_issue_registry
+
     entry = MockConfigEntry(
         domain="electric_ireland_insights",
         data={
@@ -3018,5 +3020,62 @@ async def test_full_history_backfill_tolerates_per_day_cannot_connect(recorder_m
         await coordinator.async_tariff_backfill(full_history=True)
 
         assert day_counter == 5
-        assert entry.data.get("import_full_history") is False
+        assert entry.data.get("import_full_history") is True
         assert entry.data.get("tariff_stats_initialized") is True
+        issue_registry = async_get_issue_registry(hass)
+        assert issue_registry.async_get_issue(DOMAIN, f"backfill_connection_failed_{ACCOUNT_HASH}") is not None
+
+
+async def test_full_history_backfill_respects_bill_period_gaps(recorder_mock, hass):
+    """Full-history backfill must only request dates inside known bill periods."""
+    entry = MockConfigEntry(
+        domain="electric_ireland_insights",
+        data={
+            "username": "t@t.com",
+            "password": "p",
+            "account_number": ACCOUNT,
+            "import_full_history": True,
+        },
+        unique_id=ACCOUNT_HASH,
+    )
+    entry.add_to_hass(hass)
+
+    fake_now = datetime(2026, 1, 10, 12, 0, tzinfo=UTC)
+    requested_dates: list[date] = []
+
+    def _hourly_side_effect(_session, _meter_ids, target_date):
+        requested_dates.append(target_date)
+        return make_datapoints(1, base_ts=1774224000 + (target_date.day % 5) * 86400)
+
+    bill_periods = [
+        {"startDate": "2025-12-20T00:00:00Z", "endDate": "2025-12-25T23:59:59Z"},
+        {"startDate": "2026-01-02T00:00:00Z", "endDate": "2026-01-05T23:59:59Z"},
+    ]
+
+    with (
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI") as mock_api_class,
+        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
+        patch("custom_components.electric_ireland_insights.coordinator.dt_now", return_value=fake_now),
+    ):
+        mock_api_instance = AsyncMock()
+        _setup_api_mock(
+            mock_api_instance,
+            bill_periods=bill_periods,
+            hourly_side_effect=_hourly_side_effect,
+        )
+        mock_api_class.return_value = mock_api_instance
+
+        from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
+
+        coordinator = ElectricIrelandCoordinator(hass, entry)
+        await coordinator.async_tariff_backfill(full_history=True)
+
+    gap_dates = {date(2025, 12, 26) + timedelta(days=i) for i in range(7)}  # 26 Dec - 1 Jan
+    requested_set = set(requested_dates)
+    assert not (requested_set & gap_dates)
+    assert date(2025, 12, 20) in requested_set
+    assert date(2025, 12, 25) in requested_set
+    assert date(2026, 1, 2) in requested_set
+    assert date(2026, 1, 5) in requested_set
+    assert len(requested_dates) == 10
+    assert entry.data.get("import_full_history") is False
