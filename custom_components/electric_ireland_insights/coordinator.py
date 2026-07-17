@@ -472,6 +472,10 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
             else:
                 all_dates = {yesterday - timedelta(days=i) for i in range(INITIAL_LOOKBACK_DAYS)}
 
+            if not all_dates:
+                _LOGGER.warning("No backfill dates available within bill periods")
+                return
+
             _LOGGER.info(
                 "Starting background backfill (%d days, %s to %s)",
                 len(all_dates),

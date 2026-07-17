@@ -355,7 +355,8 @@ async def test_tariff_backfill_full_history_uses_bill_periods_and_discount(recor
     entry.add_to_hass(hass)
     hass.config_entries.async_update_entry(entry, options={"discount_percentage": 20})
 
-    yesterday = (utcnow() - timedelta(days=1)).date()
+    fake_now = datetime(2026, 6, 15, 12, 0, tzinfo=UTC)
+    yesterday = (fake_now - timedelta(days=1)).date()
     bill_periods = [
         {
             "startDate": f"{yesterday.isoformat()}T00:00:00Z",
@@ -366,6 +367,7 @@ async def test_tariff_backfill_full_history_uses_bill_periods_and_discount(recor
     with (
         patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI") as mock_api_class,
         patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
+        patch("custom_components.electric_ireland_insights.coordinator.dt_now", return_value=fake_now),
     ):
         mock_api_instance = AsyncMock()
         ids = {"partner": "P", "contract": "C", "premise": "PR"}
@@ -383,6 +385,48 @@ async def test_tariff_backfill_full_history_uses_bill_periods_and_discount(recor
     assert updated is not None
     assert updated.data["tariff_stats_initialized"] is True
     assert mock_api_instance.get_bill_periods.call_count == 1
+
+
+async def test_tariff_backfill_full_history_future_periods_skips(recorder_mock, hass):
+    """Full-history backfill skips gracefully when all bill periods are in the future."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"username": "t@t.com", "password": "p", "account_number": ACCOUNT},
+        unique_id=ACCOUNT_HASH,
+    )
+    entry.add_to_hass(hass)
+
+    fake_now = datetime(2026, 6, 15, 12, 0, tzinfo=UTC)
+    future_start = (fake_now + timedelta(days=1)).date()
+    future_end = future_start + timedelta(days=30)
+    bill_periods = [
+        {
+            "startDate": f"{future_start.isoformat()}T00:00:00Z",
+            "endDate": f"{future_end.isoformat()}T23:59:59Z",
+        }
+    ]
+
+    with (
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI") as mock_api_class,
+        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
+        patch("custom_components.electric_ireland_insights.coordinator.dt_now", return_value=fake_now),
+    ):
+        mock_api_instance = AsyncMock()
+        ids = {"partner": "P", "contract": "C", "premise": "PR"}
+        mock_api_instance.authenticate = AsyncMock(return_value=(ids, None))
+        mock_api_instance.get_bill_periods = AsyncMock(return_value=bill_periods)
+        mock_api_instance.get_hourly_usage = AsyncMock(return_value=[])
+        mock_api_class.return_value = mock_api_instance
+
+        from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
+
+        coordinator = ElectricIrelandCoordinator(hass, entry)
+        await coordinator.async_tariff_backfill(full_history=True)
+
+    updated = hass.config_entries.async_get_entry(entry.entry_id)
+    assert updated is not None
+    assert "tariff_stats_initialized" not in updated.data
+    assert mock_api_instance.get_hourly_usage.call_count == 0
 
 
 async def test_consumption_statistics_correct(recorder_mock, hass, mock_config_entry):
