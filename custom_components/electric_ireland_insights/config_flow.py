@@ -155,9 +155,9 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
             data_schema=vol.Schema(
                 {
                     vol.Optional("import_full_history", default=True): bool,
-                    vol.Optional(CONF_DISCOUNT_PERCENTAGE, default=DEFAULT_DISCOUNT_PERCENTAGE): vol.All(
-                        vol.Coerce(int), vol.Range(min=0, max=100)
-                    ),
+                    # No default for the discount: the frontend renders the optional
+                    # field unchecked, and an unset value falls back to 0 below.
+                    vol.Optional(CONF_DISCOUNT_PERCENTAGE): vol.All(vol.Coerce(int), vol.Range(min=0, max=100)),
                 }
             ),
         )

@@ -4,10 +4,15 @@ import logging
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResultType, InvalidData
 
-from custom_components.electric_ireland_insights.const import DOMAIN, hash_account_id
+from custom_components.electric_ireland_insights.const import (
+    CONF_DISCOUNT_PERCENTAGE,
+    DOMAIN,
+    hash_account_id,
+)
 from custom_components.electric_ireland_insights.exceptions import (
     AccountNotFound,
     CannotConnect,
@@ -783,6 +788,42 @@ async def test_options_step_discount_default_zero(recorder_mock, hass, enable_cu
         )
         assert result3["type"] == FlowResultType.CREATE_ENTRY
         assert "discount_percentage" not in result3["data"]
+        assert result3["options"]["discount_percentage"] == 0
+
+
+async def test_options_step_discount_field_has_no_default(recorder_mock, hass, enable_custom_integrations):
+    """Test onboarding discount field has no schema default so it renders unchecked."""
+    with (
+        patch("custom_components.electric_ireland_insights.config_flow.ElectricIrelandAPI") as mock_api_class,
+        patch("custom_components.electric_ireland_insights.config_flow.async_create_clientsession"),
+    ):
+        mock_api_instance = AsyncMock()
+        mock_api_instance.discover_accounts = AsyncMock(
+            return_value=[{"account_number": "100000001", "display_name": "100000001"}]
+        )
+        mock_api_instance.validate_credentials = AsyncMock(
+            return_value={"partner": "p1", "contract": "c1", "premise": "pr1"}
+        )
+        mock_api_class.return_value = mock_api_instance
+
+        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+        result2 = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {"username": "test@test.com", "password": "testpass"},
+        )
+        assert result2["step_id"] == "options"
+
+        # The discount field must carry no schema default so the frontend renders
+        # the optional-field checkbox unchecked during first-time setup.
+        discount_marker = next(key for key in result2["data_schema"].schema if key == CONF_DISCOUNT_PERCENTAGE)
+        assert discount_marker.default is vol.UNDEFINED
+
+        # Leaving the field unset still stores 0 in entry options.
+        result3 = await hass.config_entries.flow.async_configure(
+            result2["flow_id"],
+            {"import_full_history": False},
+        )
+        assert result3["type"] == FlowResultType.CREATE_ENTRY
         assert result3["options"]["discount_percentage"] == 0
 
 
