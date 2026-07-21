@@ -83,5 +83,5 @@ jobs:
             --cov=custom_components/electric_ireland_insights \
             --cov-branch \
             --cov-report=term-missing \
-            --cov-fail-under=95 \
+            --cov-fail-under=99 \
             -q

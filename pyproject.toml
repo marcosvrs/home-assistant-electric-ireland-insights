@@ -37,9 +37,9 @@ log_date_format = "%Y-%m-%d %H:%M:%S"
 
 [tool.coverage.run]
 branch = true
-omit = [
-  "custom_components/electric_ireland_insights/types.py",
-]
+
+[tool.coverage.report]
+fail_under = 99
 
 [tool.mypy]
 strict = true
