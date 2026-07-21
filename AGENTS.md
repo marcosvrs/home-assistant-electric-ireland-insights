@@ -27,7 +27,7 @@ Home Assistant custom integration (HACS) for **Electric Ireland Insights**. Scra
 |------|----------|-------|
 | Integration source | `custom_components/electric_ireland_insights/` | 14 files, see sub-AGENTS.md |
 | Tests | `tests/` | 12 test files + 2 conftest, see sub-AGENTS.md |
-| CI pipeline | `.github/workflows/validate.yml` | hassfest, HACS, ruff, mypy, pytest --cov-fail-under=95 |
+| CI pipeline | `.github/workflows/validate.yml` | hassfest, HACS, ruff, mypy, pytest --cov-fail-under=99 |
 | HA-format docs | `docs/index.md` | For home-assistant.io submission |
 | Quality compliance | `custom_components/.../quality_scale.yaml` | 52-rule IQS self-assessment |
 | Dev environment | `mise.toml` + `pyproject.toml` | Python 3.14, .venv auto-create |
@@ -39,7 +39,7 @@ Home Assistant custom integration (HACS) for **Electric Ireland Insights**. Scra
 pip install ".[dev]"
 
 # Run tests with coverage
-pytest tests/ --cov=custom_components/electric_ireland_insights --cov-report=term-missing --cov-fail-under=95 -q
+pytest tests/ --cov=custom_components/electric_ireland_insights --cov-report=term-missing --cov-fail-under=99 -q
 
 # Type checking
 mypy custom_components/electric_ireland_insights/ --strict --no-warn-return-any --ignore-missing-imports
@@ -49,7 +49,7 @@ ruff check custom_components/ tests/
 ruff format --check custom_components/ tests/
 
 # Full CI locally (all must pass)
-pytest tests/ --cov=custom_components/electric_ireland_insights --cov-fail-under=95 -q && mypy custom_components/electric_ireland_insights/ --strict --no-warn-return-any --ignore-missing-imports && ruff check custom_components/ tests/
+pytest tests/ --cov=custom_components/electric_ireland_insights --cov-fail-under=99 -q && mypy custom_components/electric_ireland_insights/ --strict --no-warn-return-any --ignore-missing-imports && ruff check custom_components/ tests/
 ```
 
 ## CONVENTIONS
@@ -58,7 +58,7 @@ pytest tests/ --cov=custom_components/electric_ireland_insights --cov-fail-under
 - **ruff** for linting + formatting. Config in `pyproject.toml`. Rules: B, E, F, I, S, UP, W, RUF, SIM, T20, ASYNC.
 - **pre-commit hooks** for local dev: ruff, mypy, codespell, trailing-whitespace. Config in `.pre-commit-config.yaml`.
 - **asyncio_mode = "auto"** in pytest. All test functions are async by default.
-- **Coverage omits** `types.py` (TypedDict-only file). All other modules must meet >=95%.
+- **Coverage includes** all modules (no omissions); current suite is at 100% line+branch. Floor enforced in CI: >=99%.
 - **No YAML config**. Config-entry-only via `cv.config_entry_only_config_schema(DOMAIN)`.
 
 ## ANTI-PATTERNS (THIS PROJECT)
@@ -380,7 +380,7 @@ session = aiohttp.ClientSession()  # FORBIDDEN
 
 ### Test Requirements
 
-- **Coverage**: >=95% on all modules (CI enforces `--cov-fail-under=95`)
+- **Coverage**: >=99% on all modules (CI enforces `--cov-fail-under=99`)
 - **Async**: All tests are async (`asyncio_mode = "auto"`)
 - **Minimal mocking**: Mock only external boundaries (HTTP responses via `aioresponses`, HA internals via `pytest-homeassistant-custom-component`). Never mock internal logic.
 - **Config flow**: 100% path coverage including every error branch
@@ -400,7 +400,7 @@ session = aiohttp.ClientSession()  # FORBIDDEN
 
 ```bash
 # Full suite with coverage (must pass before any PR)
-pytest tests/ --cov=custom_components/electric_ireland_insights --cov-report=term-missing --cov-fail-under=95 -q
+pytest tests/ --cov=custom_components/electric_ireland_insights --cov-report=term-missing --cov-fail-under=99 -q
 
 # Single test file
 pytest tests/test_coordinator.py -v
@@ -415,7 +415,7 @@ pytest tests/test_coordinator.py::test_specific_function -v
 
 Before any change is considered complete:
 
-1. `pytest tests/ --cov-fail-under=95` passes
+1. `pytest tests/ --cov-fail-under=99` passes
 2. `mypy --strict` passes with zero errors
 3. `ruff check` and `ruff format --check` pass with zero errors
 4. `quality_scale.yaml` updated if new rules are satisfied or new exemptions needed

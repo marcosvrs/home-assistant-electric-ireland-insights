@@ -2,7 +2,7 @@
 
 ## OVERVIEW
 
-12 test files + 2 conftest, ~6,845 lines, >=95% coverage. Uses `pytest-homeassistant-custom-component` for HA test harness, `aioresponses` for HTTP mocking. All tests are async (`asyncio_mode = "auto"`).
+12 test files + 2 conftest, ~6,845 lines, >=99% coverage. Uses `pytest-homeassistant-custom-component` for HA test harness, `aioresponses` for HTTP mocking. All tests are async (`asyncio_mode = "auto"`).
 
 ## STRUCTURE
 
@@ -106,7 +106,7 @@ tests/
 - **Fixtures**: Shared fixtures in `conftest.py`. Test-specific fixtures inline in test files.
 - **Assertions**: Direct `assert` statements. Use `pytest.raises` for expected exceptions.
 - **Statistics verification**: Use `get_instance(hass).async_add_executor_job(statistics_during_period, ...)` to verify recorder state.
-- **Coverage**: `--cov-fail-under=95` enforced in CI. `types.py` is excluded (TypedDict-only file).
+- **Coverage**: `--cov-fail-under=99` enforced in CI. No files excluded; `types.py` is counted and fully covered via imports.
 
 ## TDD WORKFLOW (MANDATORY)
 
@@ -115,12 +115,12 @@ Every code change follows this cycle:
 1. **RED**: Write a failing test that captures expected behavior
 2. **GREEN**: Write minimal code to pass the test
 3. **REFACTOR**: Clean up, tests must stay green
-4. **VERIFY**: `pytest tests/ --cov-fail-under=95 -q && mypy --strict && ruff check custom_components/ tests/`
+4. **VERIFY**: `pytest tests/ --cov-fail-under=99 -q && mypy --strict && ruff check custom_components/ tests/`
 
 ## ANTI-PATTERNS
 
 - **NEVER** mock internal logic (HTML parsing, stat calculation, coordinator update flow).
-- **NEVER** skip coverage checks — CI enforces >=95%.
+- **NEVER** skip coverage checks — CI enforces >=99%.
 - **NEVER** use `@pytest.mark.asyncio` — `asyncio_mode = "auto"` handles it.
 - **NEVER** create real network connections in tests — always `aioresponses`.
 - **NEVER** delete or weaken tests to make CI pass — fix the code.
