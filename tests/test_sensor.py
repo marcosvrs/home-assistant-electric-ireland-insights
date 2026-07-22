@@ -1,7 +1,7 @@
 # pyright: reportMissingImports=false
 """Tests for Electric Ireland diagnostic entities."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 from homeassistant.components.sensor import SensorDeviceClass
@@ -186,6 +186,12 @@ async def test_data_freshness_with_valid_timestamp(hass, enable_custom_integrati
     fixed_now = datetime(2026, 3, 23, 12, 0, 0, tzinfo=UTC)
     with _patch("custom_components.electric_ireland_insights.sensor.utcnow", return_value=fixed_now):
         value = sensor.native_value
+        mock_coordinator.data["latest_data_timestamp"] = fixed_now - timedelta(seconds=108000.5)
+        rounded_value = sensor.native_value
+        mock_coordinator.data["latest_data_timestamp"] = fixed_now + timedelta(hours=1)
+        clamped_value = sensor.native_value
 
     assert isinstance(value, float)
-    assert value >= 0.0
+    assert value == 2.0
+    assert rounded_value == 1.3
+    assert clamped_value == 0.0

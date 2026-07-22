@@ -2,12 +2,13 @@
 
 import logging
 from datetime import UTC, date, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
-import pytest
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.statistics import statistics_during_period
+from homeassistant.const import UnitOfEnergy
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers.issue_registry import IssueSeverity
 from homeassistant.helpers.issue_registry import async_get as async_get_issue_registry
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from homeassistant.util.dt import utcnow
@@ -16,6 +17,7 @@ from pytest_homeassistant_custom_component.components.recorder.common import (
     async_wait_recording_done,
 )
 
+import pytest
 from custom_components.electric_ireland_insights.const import (
     DATA_GAP_THRESHOLD_DAYS,
     DOMAIN,
@@ -345,8 +347,9 @@ async def test_update_data_refreshes_cached_ids_after_stale_login(recorder_mock,
     assert updated.data["premise_id"] == "PR1"
 
 
-async def test_tariff_backfill_full_history_uses_bill_periods_and_discount(recorder_mock, hass):
+async def test_tariff_backfill_full_history_uses_bill_periods_and_discount(recorder_mock, hass, caplog):
     """Full-history backfill uses bill periods and still applies discount + tariff imports."""
+    caplog.set_level(logging.INFO, logger="custom_components.electric_ireland_insights.coordinator")
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={"username": "t@t.com", "password": "p", "account_number": ACCOUNT},
@@ -366,7 +369,9 @@ async def test_tariff_backfill_full_history_uses_bill_periods_and_discount(recor
 
     with (
         patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI") as mock_api_class,
-        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
+        patch(
+            "custom_components.electric_ireland_insights.coordinator.async_create_clientsession"
+        ) as mock_session_factory,
         patch("custom_components.electric_ireland_insights.coordinator.dt_now", return_value=fake_now),
     ):
         mock_api_instance = AsyncMock()
@@ -385,10 +390,40 @@ async def test_tariff_backfill_full_history_uses_bill_periods_and_discount(recor
     assert updated is not None
     assert updated.data["tariff_stats_initialized"] is True
     assert mock_api_instance.get_bill_periods.call_count == 1
+    session = mock_session_factory.return_value
+    mock_api_instance.authenticate.assert_called_once_with(session, None)
+    mock_api_instance.get_hourly_usage.assert_called_once_with(session, ids, yesterday)
+
+    await async_wait_recording_done(hass)
+    stats = await get_instance(hass).async_add_executor_job(
+        statistics_during_period,
+        hass,
+        datetime(2025, 1, 1, tzinfo=UTC),
+        datetime(2027, 1, 1, tzinfo=UTC),
+        {STAT_ID_CONSUMPTION, STAT_ID_COST, STAT_ID_COST_DISCOUNTED},
+        "hour",
+        None,
+        {"sum", "state"},
+    )
+    assert stats[STAT_ID_CONSUMPTION]
+    assert stats[STAT_ID_COST]
+    assert stats[STAT_ID_COST_DISCOUNTED]
+    assert stats[STAT_ID_COST_DISCOUNTED][-1]["sum"] == pytest.approx(
+        stats[STAT_ID_COST][-1]["sum"] * 0.8,
+        rel=1e-3,
+    )
+    messages = [
+        record.message
+        for record in caplog.records
+        if record.name == "custom_components.electric_ireland_insights.coordinator"
+    ]
+    assert "Starting background backfill (1 days, 2026-06-14 to 2026-06-14)" in messages
+    assert "Background backfill complete (24 datapoints)" in messages
 
 
-async def test_tariff_backfill_full_history_future_periods_skips(recorder_mock, hass):
+async def test_tariff_backfill_full_history_future_periods_skips(recorder_mock, hass, caplog):
     """Full-history backfill skips gracefully when all bill periods are in the future."""
+    caplog.set_level(logging.WARNING, logger="custom_components.electric_ireland_insights.coordinator")
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={"username": "t@t.com", "password": "p", "account_number": ACCOUNT},
@@ -427,6 +462,12 @@ async def test_tariff_backfill_full_history_future_periods_skips(recorder_mock, 
     assert updated is not None
     assert "tariff_stats_initialized" not in updated.data
     assert mock_api_instance.get_hourly_usage.call_count == 0
+    messages = [
+        record.message
+        for record in caplog.records
+        if record.name == "custom_components.electric_ireland_insights.coordinator"
+    ]
+    assert messages == ["No backfill dates available within bill periods"]
 
 
 async def test_consumption_statistics_correct(recorder_mock, hass, mock_config_entry):
@@ -477,6 +518,91 @@ async def test_consumption_statistics_correct(recorder_mock, hass, mock_config_e
     last_sum = stats[STAT_ID_CONSUMPTION][-1]["sum"]
     expected_total = sum(dp["consumption"] for dp in datapoints)
     assert abs(last_sum - expected_total) < 0.01
+
+    direct_datapoints = [
+        {
+            "consumption": None,
+            "cost": 0.1,
+            "start": 1774224000,
+            "tariff_bucket": "off_peak",
+        },
+        {
+            "consumption": 2.5,
+            "cost": 0.5,
+            "start": 1774224065.5,
+            "tariff_bucket": "off_peak",
+        },
+        {
+            "consumption": 1.5,
+            "cost": 0.3,
+            "start": 1774224125.25,
+            "tariff_bucket": "off_peak",
+        },
+    ]
+    direct_stat_id = f"{DOMAIN}:{ACCOUNT_HASH}_direct_consumption"
+    with (
+        patch(
+            "custom_components.electric_ireland_insights.coordinator.statistics_during_period",
+            return_value={direct_stat_id: [{"sum": 0.0}]},
+        ) as mock_existing,
+        patch("custom_components.electric_ireland_insights.coordinator.async_add_external_statistics") as mock_add,
+    ):
+        await coordinator._insert_statistics(
+            direct_datapoints,
+            "consumption",
+            direct_stat_id,
+            "kWh",
+            name_override="Direct consumption",
+            discount=20,
+        )
+        await coordinator._insert_statistics(
+            direct_datapoints[1:],
+            "consumption",
+            f"{direct_stat_id}_default",
+            "kWh",
+        )
+        await coordinator._insert_statistics(
+            direct_datapoints[1:],
+            "cost",
+            f"{DOMAIN}:{ACCOUNT_HASH}_direct_cost",
+            "EUR",
+        )
+
+    assert mock_existing.call_args_list[0] == call(
+        hass,
+        datetime(1970, 1, 1, tzinfo=UTC),
+        datetime(2026, 3, 23, 0, 0, tzinfo=UTC),
+        {direct_stat_id},
+        "hour",
+        None,
+        {"sum"},
+    )
+    assert mock_existing.call_count == 3
+    assert mock_add.call_count == 3
+    assert mock_add.call_args_list[0].args[0] is hass
+    metadata = mock_add.call_args_list[0].args[1]
+    assert metadata["has_sum"] is True
+    assert metadata["mean_type"] == 0
+    assert metadata["name"] == "Direct consumption"
+    assert metadata["source"] == DOMAIN
+    assert metadata["statistic_id"] == direct_stat_id
+    assert metadata["unit_of_measurement"] == "kWh"
+    assert metadata["unit_class"] == "energy"
+    inserted = mock_add.call_args_list[0].args[2]
+    assert inserted == [
+        {
+            "start": datetime(2026, 3, 23, 0, 0, tzinfo=UTC),
+            "state": 2.5,
+            "sum": 2.5,
+        },
+        {
+            "start": datetime(2026, 3, 23, 0, 0, tzinfo=UTC),
+            "state": 1.5,
+            "sum": 4.0,
+        },
+    ]
+    assert mock_add.call_args_list[1].args[1]["name"] == f"Electric Ireland Consumption ({ACCOUNT_HASH})"
+    assert mock_add.call_args_list[2].args[1]["name"] == f"Electric Ireland Cost ({ACCOUNT_HASH})"
 
 
 # ---------------------------------------------------------------------------
@@ -1193,9 +1319,10 @@ async def test_dst_fall_back_imports_25_hours(recorder_mock, hass, mock_config_e
 # ---------------------------------------------------------------------------
 
 
-async def test_auth_error_raises_config_entry_auth_failed(recorder_mock, hass, mock_config_entry):
+async def test_auth_error_raises_config_entry_auth_failed(recorder_mock, hass, mock_config_entry, caplog):
     """Test that InvalidAuth from API raises ConfigEntryAuthFailed."""
     mock_config_entry.add_to_hass(hass)
+    caplog.set_level(logging.ERROR, logger="custom_components.electric_ireland_insights.coordinator")
 
     with (
         patch(
@@ -1220,6 +1347,12 @@ async def test_auth_error_raises_config_entry_auth_failed(recorder_mock, hass, m
 
         with pytest.raises(ConfigEntryAuthFailed):
             await coordinator._async_update_data()
+    messages = [
+        record.message
+        for record in caplog.records
+        if record.name == "custom_components.electric_ireland_insights.coordinator"
+    ]
+    assert messages == ["Authentication failed"]
 
 
 # ---------------------------------------------------------------------------
@@ -1227,9 +1360,10 @@ async def test_auth_error_raises_config_entry_auth_failed(recorder_mock, hass, m
 # ---------------------------------------------------------------------------
 
 
-async def test_connection_error_raises_update_failed(recorder_mock, hass, mock_config_entry):
+async def test_connection_error_raises_update_failed(recorder_mock, hass, mock_config_entry, caplog):
     """Test that CannotConnect from API raises UpdateFailed."""
     mock_config_entry.add_to_hass(hass)
+    caplog.set_level(logging.WARNING, logger="custom_components.electric_ireland_insights.coordinator")
 
     with (
         patch(
@@ -1254,6 +1388,12 @@ async def test_connection_error_raises_update_failed(recorder_mock, hass, mock_c
 
         with pytest.raises(UpdateFailed):
             await coordinator._async_update_data()
+    messages = [
+        record.message
+        for record in caplog.records
+        if record.name == "custom_components.electric_ireland_insights.coordinator"
+    ]
+    assert messages == ["Connection lost — data import paused"]
 
 
 # ---------------------------------------------------------------------------
@@ -1462,7 +1602,12 @@ async def test_cached_ids_fallback_to_full_login(recorder_mock, hass, mock_confi
         coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
         await coordinator._async_update_data()
 
-        assert "Cached meter IDs failed during data fetch" in caplog.text
+        messages = [
+            record.message
+            for record in caplog.records
+            if record.name == "custom_components.electric_ireland_insights.coordinator"
+        ]
+        assert messages == ["Cached meter IDs failed during data fetch, re-authenticating"]
 
         assert hass.config_entries.async_get_entry(mock_config_entry.entry_id).data.get("partner_id") == "NEW_P1", (
             "New meter IDs from fallback should be stored in entry.data"
@@ -1636,7 +1781,12 @@ async def test_connection_restored_logging(recorder_mock, hass, mock_config_entr
         with patch.object(coordinator, "_insert_statistics", new_callable=AsyncMock):
             result = await coordinator._async_update_data()
 
-        assert "Connection restored" in caplog.text
+        messages = [
+            record.message
+            for record in caplog.records
+            if record.name == "custom_components.electric_ireland_insights.coordinator"
+        ]
+        assert messages == ["Connection restored — data import resumed"]
         assert coordinator._last_update_success is True
         assert result is not None
 
@@ -1677,11 +1827,12 @@ async def test_update_failed_reraise(recorder_mock, hass, mock_config_entry):
         assert coordinator._last_update_success is False
 
 
-async def test_unexpected_exception_wrapped(recorder_mock, hass, mock_config_entry):
+async def test_unexpected_exception_wrapped(recorder_mock, hass, mock_config_entry, caplog):
     """Test unexpected exception from authenticate is wrapped in UpdateFailed."""
     from homeassistant.helpers.update_coordinator import UpdateFailed
 
     mock_config_entry.add_to_hass(hass)
+    caplog.set_level(logging.ERROR, logger="custom_components.electric_ireland_insights.coordinator")
 
     with (
         patch(
@@ -1707,6 +1858,12 @@ async def test_unexpected_exception_wrapped(recorder_mock, hass, mock_config_ent
 
         assert coordinator._last_update_success is False
         assert isinstance(exc_info.value.__cause__, RuntimeError)
+    messages = [
+        record.message
+        for record in caplog.records
+        if record.name == "custom_components.electric_ireland_insights.coordinator"
+    ]
+    assert messages == ["Unexpected error during update"]
 
 
 async def test_latest_timestamp_none_when_interval_zero(recorder_mock, hass, mock_config_entry):
@@ -2189,6 +2346,63 @@ async def test_per_tariff_cost_discounted_statistics_created(recorder_mock, hass
         gross_sum = stats[gross_id][-1]["sum"]
         discounted_sum = stats[discounted_id][-1]["sum"]
         assert abs(discounted_sum - gross_sum * 0.8) < 0.01
+
+    direct_buckets = {
+        "off_peak": off_peak[:1],
+        "custom_rate": on_peak[:1],
+    }
+    with patch.object(coordinator, "_insert_statistics", new_callable=AsyncMock) as mock_insert:
+        await coordinator._insert_per_tariff_statistics(direct_buckets, discount=20)
+
+    assert mock_insert.await_args_list == [
+        call(
+            off_peak[:1],
+            "consumption",
+            f"{DOMAIN}:{ACCOUNT_HASH}_consumption_off_peak",
+            UnitOfEnergy.KILO_WATT_HOUR,
+            name_override=f"Electric Ireland Consumption Off-Peak ({ACCOUNT_HASH})",
+        ),
+        call(
+            off_peak[:1],
+            "cost",
+            f"{DOMAIN}:{ACCOUNT_HASH}_cost_off_peak",
+            "EUR",
+            name_override=f"Electric Ireland Cost Off-Peak ({ACCOUNT_HASH})",
+        ),
+        call(
+            off_peak[:1],
+            "cost",
+            f"{DOMAIN}:{ACCOUNT_HASH}_cost_off_peak_discounted",
+            "EUR",
+            name_override=f"Electric Ireland Cost Off-Peak Discounted ({ACCOUNT_HASH})",
+            discount=20,
+        ),
+        call(
+            on_peak[:1],
+            "consumption",
+            f"{DOMAIN}:{ACCOUNT_HASH}_consumption_custom_rate",
+            UnitOfEnergy.KILO_WATT_HOUR,
+            name_override=f"Electric Ireland Consumption Custom Rate ({ACCOUNT_HASH})",
+        ),
+        call(
+            on_peak[:1],
+            "cost",
+            f"{DOMAIN}:{ACCOUNT_HASH}_cost_custom_rate",
+            "EUR",
+            name_override=f"Electric Ireland Cost Custom Rate ({ACCOUNT_HASH})",
+        ),
+        call(
+            on_peak[:1],
+            "cost",
+            f"{DOMAIN}:{ACCOUNT_HASH}_cost_custom_rate_discounted",
+            "EUR",
+            name_override=f"Electric Ireland Cost Custom Rate Discounted ({ACCOUNT_HASH})",
+            discount=20,
+        ),
+    ]
+    with patch.object(coordinator, "_insert_statistics", new_callable=AsyncMock) as default_insert:
+        await coordinator._insert_per_tariff_statistics({"off_peak": off_peak[:1]})
+    assert len(default_insert.await_args_list) == 2
 
 
 async def test_flat_rate_only_skips_per_tariff_stats(recorder_mock, hass, mock_config_entry):
@@ -2760,8 +2974,9 @@ async def test_tariff_backfill_initial_bill_periods_cannot_connect_falls_back(re
         assert entry.data.get("tariff_stats_initialized") is not True
 
 
-async def test_backfill_invalid_auth_creates_repair_issue(recorder_mock, hass):
+async def test_backfill_invalid_auth_creates_repair_issue(recorder_mock, hass, caplog):
     """Backfill InvalidAuth must create a repair issue and not crash the background task."""
+    caplog.set_level(logging.WARNING, logger="custom_components.electric_ireland_insights.coordinator")
     entry = MockConfigEntry(
         domain="electric_ireland_insights",
         data={
@@ -2787,11 +3002,23 @@ async def test_backfill_invalid_auth_creates_repair_issue(recorder_mock, hass):
         await coordinator.async_tariff_backfill()
 
     issue_registry = async_get_issue_registry(hass)
-    assert issue_registry.async_get_issue(DOMAIN, f"backfill_auth_failed_{ACCOUNT_HASH}") is not None
+    issue = issue_registry.async_get_issue(DOMAIN, f"backfill_auth_failed_{ACCOUNT_HASH}")
+    assert issue is not None
+    assert issue.severity == IssueSeverity.ERROR
+    assert issue.translation_key == "backfill_auth_failed"
+    assert issue.is_fixable is False
+    assert issue.translation_placeholders == {"account": ACCOUNT_HASH}
+    messages = [
+        record.message
+        for record in caplog.records
+        if record.name == "custom_components.electric_ireland_insights.coordinator"
+    ]
+    assert messages == ["Background backfill failed due to invalid auth"]
 
 
-async def test_backfill_cannot_connect_creates_repair_issue(recorder_mock, hass):
+async def test_backfill_cannot_connect_creates_repair_issue(recorder_mock, hass, caplog):
     """Backfill CannotConnect must create a repair issue and not crash the background task."""
+    caplog.set_level(logging.WARNING, logger="custom_components.electric_ireland_insights.coordinator")
     entry = MockConfigEntry(
         domain="electric_ireland_insights",
         data={
@@ -2817,7 +3044,18 @@ async def test_backfill_cannot_connect_creates_repair_issue(recorder_mock, hass)
         await coordinator.async_tariff_backfill()
 
     issue_registry = async_get_issue_registry(hass)
-    assert issue_registry.async_get_issue(DOMAIN, f"backfill_connection_failed_{ACCOUNT_HASH}") is not None
+    issue = issue_registry.async_get_issue(DOMAIN, f"backfill_connection_failed_{ACCOUNT_HASH}")
+    assert issue is not None
+    assert issue.severity == IssueSeverity.WARNING
+    assert issue.translation_key == "backfill_connection_failed"
+    assert issue.is_fixable is False
+    assert issue.translation_placeholders == {"account": ACCOUNT_HASH}
+    messages = [
+        record.message
+        for record in caplog.records
+        if record.name == "custom_components.electric_ireland_insights.coordinator"
+    ]
+    assert messages == ["Background backfill failed due to connection error"]
 
 
 async def test_backfill_empty_does_not_mark_initialized(recorder_mock, hass):
@@ -2896,8 +3134,9 @@ async def test_bill_period_cache_cleared_on_meter_id_rediscovery(recorder_mock, 
         assert mock_config_entry.data.get("partner_id") == "P2"
 
 
-async def test_backfill_unexpected_error_creates_repair_issue(recorder_mock, hass):
+async def test_backfill_unexpected_error_creates_repair_issue(recorder_mock, hass, caplog):
     """Backfill unexpected exception must create a repair issue and not crash the background task."""
+    caplog.set_level(logging.ERROR, logger="custom_components.electric_ireland_insights.coordinator")
     entry = MockConfigEntry(
         domain="electric_ireland_insights",
         data={
@@ -2923,7 +3162,18 @@ async def test_backfill_unexpected_error_creates_repair_issue(recorder_mock, has
         await coordinator.async_tariff_backfill()
 
     issue_registry = async_get_issue_registry(hass)
-    assert issue_registry.async_get_issue(DOMAIN, f"backfill_failed_{ACCOUNT_HASH}") is not None
+    issue = issue_registry.async_get_issue(DOMAIN, f"backfill_failed_{ACCOUNT_HASH}")
+    assert issue is not None
+    assert issue.severity == IssueSeverity.WARNING
+    assert issue.translation_key == "backfill_failed"
+    assert issue.is_fixable is False
+    assert issue.translation_placeholders == {"account": ACCOUNT_HASH}
+    messages = [
+        record.message
+        for record in caplog.records
+        if record.name == "custom_components.electric_ireland_insights.coordinator"
+    ]
+    assert messages == ["Unexpected error during background backfill"]
 
 
 async def test_close_session_awaits_awaitable_close() -> None:
@@ -3015,8 +3265,6 @@ async def test_backfill_tolerates_per_day_cannot_connect(recorder_mock, hass):
 
 async def test_full_history_backfill_tolerates_per_day_cannot_connect(recorder_mock, hass):
     """A transient CannotConnect during full-history backfill must not abort the batch."""
-    from homeassistant.helpers.issue_registry import async_get as async_get_issue_registry
-
     entry = MockConfigEntry(
         domain="electric_ireland_insights",
         data={
@@ -3094,6 +3342,7 @@ async def test_full_history_backfill_respects_bill_period_gaps(recorder_mock, ha
     bill_periods = [
         {"startDate": "2025-12-20T00:00:00Z", "endDate": "2025-12-25T23:59:59Z"},
         {"startDate": "2026-01-02T00:00:00Z", "endDate": "2026-01-05T23:59:59Z"},
+        {"startDate": "2026-01-11T00:00:00Z", "endDate": "2026-01-12T23:59:59Z"},
     ]
 
     with (
@@ -3122,6 +3371,7 @@ async def test_full_history_backfill_respects_bill_period_gaps(recorder_mock, ha
     assert date(2026, 1, 2) in requested_set
     assert date(2026, 1, 5) in requested_set
     assert len(requested_dates) == 10
+    assert all(target_date <= date(2026, 1, 9) for target_date in requested_dates)
     assert entry.data.get("import_full_history") is False
 
 
@@ -3227,8 +3477,9 @@ async def test_async_close_is_idempotent(recorder_mock, hass, mock_config_entry)
     assert mock_session_factory.return_value.close.call_count == 1
 
 
-async def test_tariff_backfill_full_history_no_bill_periods(recorder_mock, hass):
+async def test_tariff_backfill_full_history_no_bill_periods(recorder_mock, hass, caplog):
     """Full-history backfill with no bill periods logs a warning and retries later without fetching."""
+    caplog.set_level(logging.WARNING, logger="custom_components.electric_ireland_insights.coordinator")
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={"username": "t@t.com", "password": "p", "account_number": ACCOUNT},
@@ -3251,6 +3502,12 @@ async def test_tariff_backfill_full_history_no_bill_periods(recorder_mock, hass)
 
     assert mock_api_instance.get_hourly_usage.call_count == 0
     assert entry.data.get("tariff_stats_initialized") is None
+    messages = [
+        record.message
+        for record in caplog.records
+        if record.name == "custom_components.electric_ireland_insights.coordinator"
+    ]
+    assert messages == ["Full history requested but no bill periods available; will retry"]
 
 
 async def test_tariff_backfill_bounds_lookback_by_bill_periods(recorder_mock, hass):
