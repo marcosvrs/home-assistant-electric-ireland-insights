@@ -1,13 +1,15 @@
 import json
+import logging
 import sys
 from datetime import UTC, date, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
-import pytest
 from aioresponses import aioresponses as aioresponses_mock
 from bs4 import BeautifulSoup
+
+import pytest
 
 _HA_STUBS = [
     "homeassistant",
@@ -184,12 +186,43 @@ async def test_login_success() -> None:
         m.post(f"{BASE_URL}/Accounts/OnEvent", status=200, body=_INSIGHTS_HTML)
         async with aiohttp.ClientSession() as session:
             client = await api._login(session)
+
+    login_request = next(
+        call
+        for (method, url), calls in m.requests.items()
+        if method == "POST" and str(url) == f"{BASE_URL}/"
+        for call in calls
+    )
+    login_data = login_request.kwargs["data"]
+    assert login_data == {
+        "LoginFormData.UserName": "user@test.com",
+        "LoginFormData.Password": "pass123",
+        "AccountNumber": "",
+        "PotText": "",
+        "ReturnUrl": "",
+        "Source": "src_val",
+        "__EiTokPotText": "",
+        "rvt": "mock_rvt_token",
+    }
+    insights_request = next(
+        call
+        for (method, url), calls in m.requests.items()
+        if method == "POST" and str(url) == f"{BASE_URL}/Accounts/OnEvent"
+        for call in calls
+    )
+    assert insights_request.kwargs["data"] == {
+        "triggers_event": "AccountSelection.ToInsights",
+        "AccountId": "PARTNER1",
+        "ContractId": "CONTRACT1",
+        "PremiseId": "PREMISE1",
+    }
     assert client._partner == "PARTNER1"
     assert client._contract == "CONTRACT1"
     assert client._premise == "PREMISE1"
 
 
-async def test_login_missing_source_token() -> None:
+async def test_login_missing_source_token(caplog) -> None:
+    caplog.set_level(logging.DEBUG, logger="custom_components.electric_ireland_insights.api")
     api = ElectricIrelandAPI("user@test.com", "pass123", "100000001")
     with aioresponses_mock() as m:
         m.get(
@@ -201,6 +234,7 @@ async def test_login_missing_source_token() -> None:
         async with aiohttp.ClientSession() as session:
             with pytest.raises(CannotConnect):
                 await api._login(session)
+    assert "Login token extraction failed: source=False, rvt=True" in caplog.messages
 
 
 async def test_login_missing_rvt_cookie() -> None:
@@ -264,7 +298,8 @@ async def test_discover_accounts_invalid_credentials() -> None:
                 await api.discover_accounts(session)
 
 
-async def test_login_skips_accounts_without_number_and_non_electric_target() -> None:
+async def test_login_skips_accounts_without_number_and_non_electric_target(caplog) -> None:
+    caplog.set_level(logging.DEBUG, logger="custom_components.electric_ireland_insights.api")
     api = ElectricIrelandAPI("user@test.com", "pass123", "100000001")
     dashboard_html = """<html><body>
     <div class="my-accounts__item">
@@ -274,13 +309,25 @@ async def test_login_skips_accounts_without_number_and_non_electric_target() -> 
       <p class="account-number">100000001</p>
       <h2 class="account-gas-icon"></h2>
     </div>
+    <div class="my-accounts__item">
+      <p class="account-number">100000001</p>
+      <h2 class="account-electricity-icon"></h2>
+      <form action="/Accounts/OnEvent">
+        <input name="triggers_event" value="AccountSelection.ToInsights"/>
+        <input name="AccountId" value="PARTNER1"/>
+        <input name="ContractId" value="CONTRACT1"/>
+        <input name="PremiseId" value="PREMISE1"/>
+      </form>
+    </div>
     </body></html>"""
     with aioresponses_mock() as m:
         m.get(f"{BASE_URL}/", status=200, body=_LOGIN_PAGE_HTML, headers={"Set-Cookie": "rvt=mock_rvt_token; Path=/"})
         m.post(f"{BASE_URL}/", status=200, body=dashboard_html)
+        m.post(f"{BASE_URL}/Accounts/OnEvent", status=200, body=_INSIGHTS_HTML)
         async with aiohttp.ClientSession() as session:
-            with pytest.raises(AccountNotFound):
-                await api._login(session)
+            client = await api._login(session)
+    assert (client._partner, client._contract, client._premise) == ("PARTNER1", "CONTRACT1", "PREMISE1")
+    assert "Found account *****0001 but it is not an electricity account" in caplog.messages
 
 
 async def test_login_rejects_non_tag_model_data() -> None:
@@ -423,10 +470,10 @@ async def test_discover_accounts_multiple() -> None:
         m.post(f"{BASE_URL}/", status=200, body=_DASHBOARD_MULTI_ACCOUNT_HTML)
         async with aiohttp.ClientSession() as session:
             accounts = await api.discover_accounts(session)
-    assert len(accounts) == 2
-    assert accounts[0]["account_number"] == "111111111"
-    assert accounts[1]["account_number"] == "222222222"
-    assert "Office" in accounts[1]["display_name"]
+    assert accounts == [
+        {"account_number": "111111111", "display_name": "111111111"},
+        {"account_number": "222222222", "display_name": "222222222 (Office)"},
+    ]
 
 
 async def test_discover_accounts_no_accounts() -> None:
@@ -509,7 +556,8 @@ async def test_get_data_403() -> None:
                 await client.get_data(target_date)
 
 
-async def test_get_data_non_json_response() -> None:
+async def test_get_data_non_json_response(caplog) -> None:
+    caplog.set_level(logging.ERROR, logger="custom_components.electric_ireland_insights.api")
 
     meter_ids = {"partner": "P1", "contract": "C1", "premise": "PR1"}
     target_date = datetime(2026, 3, 23, tzinfo=UTC)
@@ -520,9 +568,11 @@ async def test_get_data_non_json_response() -> None:
             client = MeterInsightClient(session, meter_ids)
             with pytest.raises(CachedIdsInvalid):
                 await client.get_data(target_date)
+    assert "Expected JSON but got text/html — session may be expired" in caplog.messages
 
 
-async def test_get_data_is_success_false() -> None:
+async def test_get_data_is_success_false(caplog) -> None:
+    caplog.set_level(logging.ERROR, logger="custom_components.electric_ireland_insights.api")
     meter_ids = {"partner": "P1", "contract": "C1", "premise": "PR1"}
     target_date = datetime(2026, 3, 23, tzinfo=UTC)
     url = f"{BASE_URL}/MeterInsight/P1/C1/PR1/hourly-usage?date=2026-03-23"
@@ -532,6 +582,7 @@ async def test_get_data_is_success_false() -> None:
             client = MeterInsightClient(session, meter_ids)
             result = await client.get_data(target_date)
     assert result == []
+    assert "API returned error: Error" in caplog.messages
 
 
 async def test_get_data_missing_end_date() -> None:
@@ -559,7 +610,8 @@ async def test_get_data_invalid_json_raises_cannot_connect() -> None:
                 await client.get_data(target_date)
 
 
-async def test_get_data_multiple_tariff_keys_prefers_first_available_tariff() -> None:
+async def test_get_data_multiple_tariff_keys_prefers_first_available_tariff(caplog) -> None:
+    caplog.set_level(logging.DEBUG, logger="custom_components.electric_ireland_insights.api")
     meter_ids = {"partner": "P1", "contract": "C1", "premise": "PR1"}
     target_date = datetime(2026, 3, 23, tzinfo=UTC)
     url = f"{BASE_URL}/MeterInsight/P1/C1/PR1/hourly-usage?date=2026-03-23"
@@ -581,6 +633,12 @@ async def test_get_data_multiple_tariff_keys_prefers_first_available_tariff() ->
             result = await MeterInsightClient(session, meter_ids).get_data(target_date)
     assert len(result) == 1
     assert result[0]["tariff_bucket"] == "off_peak"
+    assert result[0]["consumption"] == 0.5
+    assert result[0]["cost"] == 0.1
+    assert (
+        "Multiple tariff keys present for 2026-03-23T01:00:00Z: ['offPeak', 'midPeak'] (using offPeak)"
+        in caplog.messages
+    )
 
 
 async def test_get_bill_periods_legacy_success_key() -> None:
@@ -988,6 +1046,7 @@ async def test_get_data_mixed_valid_and_invalid_datapoints() -> None:
         "isSuccess": True,
         "data": [
             {
+                "startDate": "2026-03-23T00:00:00Z",
                 "endDate": "2026-03-23T01:00:00Z",
                 "flatRate": {"consumption": 0.5, "cost": 0.1},
                 "offPeak": None,
@@ -1022,8 +1081,18 @@ async def test_get_data_mixed_valid_and_invalid_datapoints() -> None:
             client = MeterInsightClient(session, meter_ids)
             result = await client.get_data(target_date)
     assert len(result) == 2
-    assert result[0]["consumption"] == 0.5
-    assert result[1]["consumption"] == 0.6
+    assert result[0] == {
+        "consumption": 0.5,
+        "cost": 0.1,
+        "start": 1774224000,
+        "tariff_bucket": "flat_rate",
+    }
+    assert result[1] == {
+        "consumption": 0.6,
+        "cost": 0.12,
+        "start": 1774231200,
+        "tariff_bucket": "flat_rate",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1072,5 +1141,4 @@ async def test_discover_accounts_gas_account_filtered() -> None:
         m.post(f"{BASE_URL}/", status=200, body=_DASHBOARD_GAS_AND_ELEC_HTML)
         async with aiohttp.ClientSession() as session:
             accounts = await api.discover_accounts(session)
-    assert len(accounts) == 1
-    assert accounts[0]["account_number"] == "555555555"
+    assert accounts == [{"account_number": "555555555", "display_name": "555555555"}]

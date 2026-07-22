@@ -236,6 +236,15 @@ async def test_api_logs_redact_meter_ids(caplog) -> None:
             await api.validate_credentials(session)
 
     messages = _integration_messages(caplog)
+    assert "Performing Login..." in messages
+    assert "Navigating to Insights page..." in messages
+    assert (
+        "Discovered meter IDs: "
+        f"partner={_redact_id(TEST_PARTNER)}, "
+        f"contract={_redact_id(TEST_CONTRACT)}, "
+        f"premise={_redact_id(TEST_PREMISE)}"
+    ) in messages
+    assert "Login successful (meter IDs discovered)" in messages
     assert any(_redact_id(TEST_PARTNER) in msg for msg in messages)
     assert not any(TEST_ACCOUNT in msg for msg in messages)
     assert not any(TEST_PARTNER in msg for msg in messages)

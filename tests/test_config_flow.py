@@ -1,13 +1,13 @@
 """Tests for the Electric Ireland config flow."""
 
 import logging
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, call, patch
 
-import pytest
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResultType, InvalidData
 
+import pytest
 from custom_components.electric_ireland_insights.const import (
     CONF_DISCOUNT_PERCENTAGE,
     DOMAIN,
@@ -55,12 +55,20 @@ async def test_user_flow_success(recorder_mock, hass, enable_custom_integrations
         )
         assert result3["type"] == FlowResultType.CREATE_ENTRY
         assert result3["title"] == f"Electric Ireland Insights (Unofficial) ({ACCOUNT_HASH})"
-        assert result3["data"]["account_number"] == "100000001"
-        assert result3["data"]["partner_id"] == "p1"
-        assert result3["data"]["contract_id"] == "c1"
-        assert result3["data"]["premise_id"] == "pr1"
-        assert "discount_percentage" not in result3["data"]
+        assert result3["data"] == {
+            "username": "test@test.com",
+            "password": "testpass",
+            "account_number": ACCOUNT,
+            "partner_id": "p1",
+            "contract_id": "c1",
+            "premise_id": "pr1",
+            "import_full_history": False,
+        }
         assert result3["options"] == {"discount_percentage": 15}
+        assert mock_api_class.call_args_list == [
+            call("test@test.com", "testpass"),
+            call("test@test.com", "testpass", ACCOUNT),
+        ]
 
 
 async def test_user_flow_multi_account(recorder_mock, hass, enable_custom_integrations):
@@ -91,6 +99,12 @@ async def test_user_flow_multi_account(recorder_mock, hass, enable_custom_integr
         )
         assert result2["type"] == FlowResultType.FORM
         assert result2["step_id"] == "account"
+        account_selector = next(iter(result2["data_schema"].schema.values()))
+        assert account_selector.container == {
+            "111111111": "111111111 (Home)",
+            "222222222": "222222222 (Office)",
+        }
+        assert result2["description_placeholders"] == {"num_accounts": "2"}
 
         result3 = await hass.config_entries.flow.async_configure(
             result2["flow_id"],
@@ -104,8 +118,15 @@ async def test_user_flow_multi_account(recorder_mock, hass, enable_custom_integr
             {"import_full_history": False},
         )
         assert result4["type"] == FlowResultType.CREATE_ENTRY
-        assert result4["data"]["account_number"] == "222222222"
-        assert result4["data"]["partner_id"] == "p1"
+        assert result4["data"] == {
+            "username": "test@test.com",
+            "password": "testpass",
+            "account_number": "222222222",
+            "partner_id": "p1",
+            "contract_id": "c1",
+            "premise_id": "pr1",
+            "import_full_history": False,
+        }
 
 
 async def test_account_step_missing_account_number(recorder_mock, hass, enable_custom_integrations):
@@ -228,7 +249,7 @@ async def test_user_flow_single_account_validate_credentials_unexpected_exceptio
 
     assert result2["type"] == FlowResultType.ABORT
     assert result2["reason"] == "cannot_connect"
-    assert "Unexpected exception during account setup" in caplog.text
+    assert [record.getMessage() for record in caplog.records] == ["Unexpected exception during account setup"]
 
 
 async def test_user_flow_cannot_connect(recorder_mock, hass, enable_custom_integrations):
@@ -326,6 +347,19 @@ async def test_reauth_flow_success(recorder_mock, hass, enable_custom_integratio
         )
         assert result2["type"] == FlowResultType.ABORT
         assert result2["reason"] == "reauth_successful"
+        mock_api_class.assert_called_once_with("test@test.com", "newpassword", ACCOUNT)
+
+    updated = hass.config_entries.async_get_entry(mock_config_entry.entry_id)
+    assert updated is not None
+    assert updated.data == {
+        "username": "test@test.com",
+        "password": "newpassword",
+        "account_number": ACCOUNT,
+        "tariff_stats_initialized": True,
+        "partner_id": "p1",
+        "contract_id": "c1",
+        "premise_id": "pr1",
+    }
 
 
 async def test_reauth_flow_invalid_auth(recorder_mock, hass, enable_custom_integrations, mock_config_entry):
@@ -433,10 +467,17 @@ async def test_reconfigure_success(recorder_mock, hass, enable_custom_integratio
         assert result2["reason"] == "reconfigure_successful"
 
     updated = hass.config_entries.async_get_entry(entry.entry_id)
-    assert updated.data["password"] == "newpass"
-    assert updated.data["partner_id"] is None
-    assert updated.data["contract_id"] is None
-    assert updated.data["premise_id"] is None
+    assert updated is not None
+    assert updated.data == {
+        "username": "test@test.com",
+        "password": "newpass",
+        "account_number": ACCOUNT,
+        "partner_id": None,
+        "contract_id": None,
+        "premise_id": None,
+        "import_full_history": False,
+    }
+    mock_api_class.assert_called_once_with("test@test.com", "newpass", ACCOUNT)
 
 
 async def test_reconfigure_force_rediscovery(recorder_mock, hass, enable_custom_integrations):
@@ -482,10 +523,17 @@ async def test_reconfigure_force_rediscovery(recorder_mock, hass, enable_custom_
         assert result2["reason"] == "reconfigure_successful"
 
     updated = hass.config_entries.async_get_entry(entry.entry_id)
-    assert updated.data["password"] == "testpass"
-    assert updated.data["partner_id"] is None
-    assert updated.data["contract_id"] is None
-    assert updated.data["premise_id"] is None
+    assert updated is not None
+    assert updated.data == {
+        "username": "test@test.com",
+        "password": "testpass",
+        "account_number": ACCOUNT,
+        "partner_id": None,
+        "contract_id": None,
+        "premise_id": None,
+        "import_full_history": False,
+    }
+    mock_api_class.assert_called_once_with("test@test.com", "testpass", ACCOUNT)
 
 
 async def test_reconfigure_auth_error(recorder_mock, hass, enable_custom_integrations):
@@ -547,7 +595,7 @@ async def test_user_flow_unexpected_exception(recorder_mock, hass, enable_custom
         )
         assert result2["type"] == FlowResultType.FORM
         assert result2["errors"]["base"] == "cannot_connect"
-        assert "Unexpected exception" in caplog.text
+        assert [record.getMessage() for record in caplog.records] == ["Unexpected exception"]
 
 
 async def test_reauth_cannot_connect(recorder_mock, hass, enable_custom_integrations, mock_config_entry):
@@ -600,7 +648,7 @@ async def test_reauth_unexpected_exception(recorder_mock, hass, enable_custom_in
         result2 = await hass.config_entries.flow.async_configure(result["flow_id"], {"password": "pass"})
         assert result2["type"] == FlowResultType.FORM
         assert result2["errors"]["base"] == "cannot_connect"
-        assert "Unexpected exception" in caplog.text
+        assert [record.getMessage() for record in caplog.records] == ["Unexpected exception during reauth"]
 
 
 async def test_reconfigure_cannot_connect(recorder_mock, hass, enable_custom_integrations):
@@ -704,7 +752,7 @@ async def test_reconfigure_unexpected_exception(recorder_mock, hass, enable_cust
         )
         assert result2["type"] == FlowResultType.FORM
         assert result2["errors"]["base"] == "cannot_connect"
-        assert "Unexpected exception" in caplog.text
+        assert [record.getMessage() for record in caplog.records] == ["Unexpected exception during reconfigure"]
 
 
 async def test_reconfigure_same_password_stores_meter_ids(recorder_mock, hass, enable_custom_integrations):
@@ -749,9 +797,17 @@ async def test_reconfigure_same_password_stores_meter_ids(recorder_mock, hass, e
         assert result2["reason"] == "reconfigure_successful"
 
     updated = hass.config_entries.async_get_entry(entry.entry_id)
-    assert updated.data["partner_id"] == "p_new"
-    assert updated.data["contract_id"] == "c_new"
-    assert updated.data["premise_id"] == "pr_new"
+    assert updated is not None
+    assert updated.data == {
+        "username": "test@test.com",
+        "password": "testpass",
+        "account_number": ACCOUNT,
+        "partner_id": "p_new",
+        "contract_id": "c_new",
+        "premise_id": "pr_new",
+        "import_full_history": False,
+    }
+    mock_api_class.assert_called_once_with("test@test.com", "testpass", ACCOUNT)
 
 
 # ---------------------------------------------------------------------------
@@ -787,8 +843,7 @@ async def test_options_step_discount_default_zero(recorder_mock, hass, enable_cu
             {"import_full_history": False},
         )
         assert result3["type"] == FlowResultType.CREATE_ENTRY
-        assert "discount_percentage" not in result3["data"]
-        assert result3["options"]["discount_percentage"] == 0
+        assert result3["options"] == {"discount_percentage": 0}
 
 
 async def test_options_step_discount_field_has_no_default(recorder_mock, hass, enable_custom_integrations):
@@ -885,9 +940,11 @@ async def test_options_flow_updates_discount(recorder_mock, hass, enable_custom_
         {"discount_percentage": 30},
     )
     assert result2["type"] == FlowResultType.CREATE_ENTRY
+    assert result2["data"] == {"discount_percentage": 30}
 
     updated = hass.config_entries.async_get_entry(entry.entry_id)
-    assert updated.options["discount_percentage"] == 30
+    assert updated is not None
+    assert updated.options == {"discount_percentage": 30}
 
 
 async def test_options_flow_discount_validation_range(recorder_mock, hass, enable_custom_integrations):
