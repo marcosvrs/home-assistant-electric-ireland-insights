@@ -3,11 +3,11 @@
 import logging
 from unittest.mock import AsyncMock, call, patch
 
+import pytest
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResultType, InvalidData
 
-import pytest
 from custom_components.electric_ireland_insights.const import (
     CONF_DISCOUNT_PERCENTAGE,
     DOMAIN,
