@@ -6,10 +6,9 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
+import pytest
 from aioresponses import aioresponses as aioresponses_mock
 from bs4 import BeautifulSoup
-
-import pytest
 
 _HA_STUBS = [
     "homeassistant",

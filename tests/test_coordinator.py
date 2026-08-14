@@ -4,6 +4,7 @@ import logging
 from datetime import UTC, date, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
+import pytest
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.statistics import statistics_during_period
 from homeassistant.const import UnitOfEnergy
@@ -17,7 +18,6 @@ from pytest_homeassistant_custom_component.components.recorder.common import (
     async_wait_recording_done,
 )
 
-import pytest
 from custom_components.electric_ireland_insights.const import (
     DATA_GAP_THRESHOLD_DAYS,
     DOMAIN,
