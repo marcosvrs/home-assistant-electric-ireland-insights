@@ -169,10 +169,6 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                 async_delete_issue(self.hass, DOMAIN, f"data_gap_{self._account_hash}")
 
     async def _async_update_data(self) -> CoordinatorData:
-        async with self._api_lock:
-            return await self._async_update_data_locked()
-
-    async def _async_update_data_locked(self) -> CoordinatorData:
         session = self._session
         was_successful = self._last_update_success
 
@@ -209,13 +205,15 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                 }
 
             try:
-                meter_ids, discovered_ids = await self._api.authenticate(session, cached_ids)
+                async with self._api_lock:
+                    meter_ids, discovered_ids = await self._api.authenticate(session, cached_ids)
             except CannotConnect:
                 if cached_ids is None:
                     raise
                 _LOGGER.warning("Cached meter IDs failed during login, falling back to full discovery")
                 session.cookie_jar.clear()
-                meter_ids, discovered_ids = await self._api.authenticate(session, None)
+                async with self._api_lock:
+                    meter_ids, discovered_ids = await self._api.authenticate(session, None)
 
             if discovered_ids is not None:
                 self._update_cached_meter_ids(discovered_ids)
@@ -226,7 +224,8 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
             )
             if bill_period_stale:
                 try:
-                    self._bill_periods = await self._api.get_bill_periods(session, meter_ids)
+                    async with self._api_lock:
+                        self._bill_periods = await self._api.get_bill_periods(session, meter_ids)
                     self._bill_periods_fetched_at = utcnow()
                 except CannotConnect:
                     _LOGGER.warning("Failed to fetch bill periods, falling back to full lookback window")
@@ -262,11 +261,12 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
             failed_dates: list[date] = []
             for target_date in sorted(dates_to_fetch):  # SEQUENTIAL — never parallel
                 try:
-                    day_data = await self._api.get_hourly_usage(
-                        session,
-                        meter_ids,
-                        target_date,
-                    )
+                    async with self._api_lock:
+                        day_data = await self._api.get_hourly_usage(
+                            session,
+                            meter_ids,
+                            target_date,
+                        )
                     datapoints.extend(day_data)
                 except CannotConnect:
                     _LOGGER.warning(
@@ -279,17 +279,19 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                         "Cached meter IDs failed during data fetch, re-authenticating",
                     )
                     session.cookie_jar.clear()
-                    meter_ids, discovered_ids = await self._api.authenticate(
-                        session,
-                        None,
-                    )
+                    async with self._api_lock:
+                        meter_ids, discovered_ids = await self._api.authenticate(
+                            session,
+                            None,
+                        )
                     if discovered_ids is not None:
                         self._update_cached_meter_ids(discovered_ids)
-                    day_data = await self._api.get_hourly_usage(
-                        session,
-                        meter_ids,
-                        target_date,
-                    )
+                    async with self._api_lock:
+                        day_data = await self._api.get_hourly_usage(
+                            session,
+                            meter_ids,
+                            target_date,
+                        )
                     datapoints.extend(day_data)
 
             if failed_dates and not datapoints:

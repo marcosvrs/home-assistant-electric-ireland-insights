@@ -7,6 +7,7 @@ import pytest
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResultType, InvalidData
+from pytest_homeassistant_custom_component.components.recorder.common import async_wait_recording_done
 
 from custom_components.electric_ireland_insights.const import (
     CONF_DISCOUNT_PERCENTAGE,
@@ -953,6 +954,39 @@ async def test_options_flow_updates_discount(recorder_mock, hass, enable_custom_
     updated = hass.config_entries.async_get_entry(entry.entry_id)
     assert updated is not None
     assert updated.options == {"discount_percentage": 30}
+
+
+async def test_options_flow_uses_legacy_data_discount(
+    recorder_mock, hass, enable_custom_integrations, mock_setup_entry
+):
+    """Options flow keeps a legacy data discount when options are empty."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "username": "test@test.com",
+            "password": "testpass",
+            "account_number": ACCOUNT,
+            CONF_DISCOUNT_PERCENTAGE: 20,
+        },
+        options={},
+        unique_id=ACCOUNT_HASH,
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    discount_field = next(key for key in result["data_schema"].schema if key == CONF_DISCOUNT_PERCENTAGE)
+    assert discount_field.default() == 20
+
+    result2 = await hass.config_entries.options.async_configure(result["flow_id"], {})
+    assert result2["type"] == FlowResultType.CREATE_ENTRY
+    assert result2["data"] == {CONF_DISCOUNT_PERCENTAGE: 20}
+
+    updated = hass.config_entries.async_get_entry(entry.entry_id)
+    assert updated is not None
+    assert updated.options == {CONF_DISCOUNT_PERCENTAGE: 20}
+    await async_wait_recording_done(hass)
 
 
 async def test_options_flow_discount_validation_range(

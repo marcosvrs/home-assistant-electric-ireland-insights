@@ -10,7 +10,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
 
-from .const import DOMAIN, _redact_id, hash_account_id
+from .const import CONF_DISCOUNT_PERCENTAGE, DOMAIN, _redact_id, hash_account_id
 from .coordinator import ElectricIrelandCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -22,6 +22,25 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 type ElectricIrelandConfigEntry = ConfigEntry[ElectricIrelandCoordinator]
 
 _LEGACY_DIAGNOSTIC_ENTITY_KEYS = frozenset({"last_import_time", "data_freshness_days"})
+
+
+def _migrate_legacy_discount_to_options(hass: HomeAssistant, entry: ElectricIrelandConfigEntry) -> None:
+    """Move a legacy data discount into config entry options."""
+    if entry.options.get(CONF_DISCOUNT_PERCENTAGE) is not None:
+        return
+
+    legacy_discount = entry.data.get(CONF_DISCOUNT_PERCENTAGE)
+    if legacy_discount is None:
+        return
+
+    hass.config_entries.async_update_entry(
+        entry,
+        options={
+            **entry.options,
+            CONF_DISCOUNT_PERCENTAGE: int(legacy_discount),
+        },
+    )
+    _LOGGER.info("Migrated legacy discount percentage into config entry options")
 
 
 def _migrate_legacy_entity_ids(hass: HomeAssistant, entry: ElectricIrelandConfigEntry) -> None:
@@ -77,6 +96,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ElectricIrelandConfigEnt
         "Setting up Electric Ireland entry, account=%s",
         _redact_id(entry.data["account_number"]),
     )
+    _migrate_legacy_discount_to_options(hass, entry)
     _migrate_legacy_entity_ids(hass, entry)
     coordinator = ElectricIrelandCoordinator(hass, entry)
 
