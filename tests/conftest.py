@@ -87,7 +87,7 @@ def mock_setup_entry():
         yield setup_mock
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def persistent_database() -> bool:
     """Use a file-backed recorder database to avoid in-memory shutdown races."""
     return True

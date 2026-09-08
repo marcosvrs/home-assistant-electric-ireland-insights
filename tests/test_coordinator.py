@@ -3659,7 +3659,7 @@ async def test_none_value_datapoints_produce_no_statistics(recorder_mock, hass, 
     assert STAT_ID_COST not in stats or len(stats[STAT_ID_COST]) == 0
 
 
-async def test_backfill_releases_provider_lock_between_requests(hass, mock_config_entry):
+async def test_backfill_releases_provider_lock_between_requests(recorder_mock, hass, mock_config_entry):
     """A foreground refresh can run between serialized backfill requests."""
     mock_config_entry.add_to_hass(hass)
     second_entry = MockConfigEntry(
@@ -3715,6 +3715,10 @@ async def test_backfill_releases_provider_lock_between_requests(hass, mock_confi
         await first.async_tariff_backfill(full_history=True)
         assert second_task is not None
         await second_task
+        await hass.async_block_till_done()
+        await async_wait_recording_done(hass)
+        await first.async_close()
+        await second.async_close()
 
     assert call_order == ["backfill:2026-03-23", "foreground", "backfill:2026-03-24"]
 
