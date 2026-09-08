@@ -998,10 +998,11 @@ async def test_options_flow_falls_back_from_none_discount_values(
     hass,
     enable_custom_integrations,
     mock_setup_entry,
+    *,
     legacy_discount,
     expected,
 ):
-    """Options flow falls back when stored or submitted discount is None."""
+    """Options flow falls back when stored discount is None or unchanged."""
     from pytest_homeassistant_custom_component.common import MockConfigEntry
 
     entry = MockConfigEntry(
@@ -1016,16 +1017,15 @@ async def test_options_flow_falls_back_from_none_discount_values(
         unique_id=ACCOUNT_HASH,
     )
     entry.add_to_hass(hass)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result2 = await hass.config_entries.options.async_configure(result["flow_id"], {})
+    assert result2["type"] == FlowResultType.CREATE_ENTRY
+    assert result2["data"] == {CONF_DISCOUNT_PERCENTAGE: expected}
 
-    from custom_components.electric_ireland_insights.config_flow import ElectricIrelandInsightsOptionsFlow
-
-    flow = ElectricIrelandInsightsOptionsFlow()
-    flow.hass = hass
-    flow.handler = entry.entry_id
-    result = await flow.async_step_init({CONF_DISCOUNT_PERCENTAGE: None})
-
-    assert result["type"] == FlowResultType.CREATE_ENTRY
-    assert result["data"] == {CONF_DISCOUNT_PERCENTAGE: expected}
+    updated = hass.config_entries.async_get_entry(entry.entry_id)
+    assert updated is not None
+    assert updated.options == {CONF_DISCOUNT_PERCENTAGE: expected}
+    await async_wait_recording_done(hass)
 
 
 async def test_options_flow_discount_validation_range(
