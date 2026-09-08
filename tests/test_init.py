@@ -187,6 +187,45 @@ async def test_unload_entry(recorder_mock, hass, enable_custom_integrations, moc
         assert mock_config_entry.state == ConfigEntryState.NOT_LOADED
 
 
+async def test_unload_entry_keeps_session_open_when_platform_unload_fails(
+    recorder_mock, hass, enable_custom_integrations, mock_config_entry
+):
+    """A failed platform unload leaves the coordinator available for retry."""
+    mock_config_entry.add_to_hass(hass)
+    with (
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI") as mock_api_class,
+        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
+        patch(
+            "custom_components.electric_ireland_insights.coordinator.get_last_statistics",
+            return_value={},
+        ),
+    ):
+        mock_api_instance = AsyncMock()
+        mock_api_instance.authenticate = AsyncMock(return_value=(TEST_METER_IDS, TEST_METER_IDS))
+        mock_api_instance.get_bill_periods = AsyncMock(return_value=[])
+        mock_api_instance.get_hourly_usage = AsyncMock(return_value=[])
+        mock_api_class.return_value = mock_api_instance
+
+        await hass.config_entries.async_setup(mock_config_entry.entry_id)
+        await hass.async_block_till_done()
+
+        coordinator = mock_config_entry.runtime_data
+        with patch.object(
+            hass.config_entries,
+            "async_unload_platforms",
+            new_callable=AsyncMock,
+            return_value=False,
+        ):
+            result = await hass.config_entries.async_unload(mock_config_entry.entry_id)
+            await hass.async_block_till_done()
+
+        assert result is False
+        assert mock_config_entry.state == ConfigEntryState.FAILED_UNLOAD
+        assert coordinator._closed is False
+        assert coordinator._session.close.called is False
+        await coordinator.async_close()
+
+
 async def test_setup_entry_version_one_without_migration(recorder_mock, hass, enable_custom_integrations, caplog):
     """Test version 1 entries load directly without migration."""
     caplog.set_level(logging.DEBUG, logger="custom_components.electric_ireland_insights")

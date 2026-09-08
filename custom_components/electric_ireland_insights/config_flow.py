@@ -290,13 +290,16 @@ class ElectricIrelandInsightsOptionsFlow(config_entries.OptionsFlowWithReload):
     """Options flow for Electric Ireland Insights."""
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        configured_discount = self.config_entry.options.get(
-            CONF_DISCOUNT_PERCENTAGE,
-            self.config_entry.data.get(CONF_DISCOUNT_PERCENTAGE, DEFAULT_DISCOUNT_PERCENTAGE),
-        )
+        configured_discount = self.config_entry.options.get(CONF_DISCOUNT_PERCENTAGE)
+        if configured_discount is None:
+            configured_discount = self.config_entry.data.get(CONF_DISCOUNT_PERCENTAGE)
+        if configured_discount is None:
+            configured_discount = DEFAULT_DISCOUNT_PERCENTAGE
 
         if user_input is not None:
-            discount = user_input.get(CONF_DISCOUNT_PERCENTAGE, configured_discount)
+            discount = user_input.get(CONF_DISCOUNT_PERCENTAGE)
+            if discount is None:
+                discount = configured_discount
             options = {
                 CONF_DISCOUNT_PERCENTAGE: int(discount),
             }
