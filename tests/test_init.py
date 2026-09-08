@@ -4,7 +4,9 @@ import logging
 from unittest.mock import AsyncMock, patch
 
 from homeassistant.config_entries import ConfigEntryState
+from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
 
+from custom_components.electric_ireland_insights import _migrate_legacy_entity_ids
 from custom_components.electric_ireland_insights.const import DOMAIN, hash_account_id
 
 TEST_METER_IDS = {"partner": "P1", "contract": "C1", "premise": "PR1"}
@@ -259,3 +261,29 @@ async def test_unload_entry_closes_session_after_platforms(
 
         assert result is True
         assert order == ["unload", "close"]
+
+
+async def test_legacy_diagnostic_entity_ids_are_migrated(hass, mock_config_entry):
+    """Legacy diagnostic IDs are renamed without retaining raw account IDs."""
+    mock_config_entry.add_to_hass(hass)
+    registry = async_get_entity_registry(hass)
+    account = mock_config_entry.data["account_number"]
+
+    for key in ("last_import_time", "data_freshness_days"):
+        registry.async_get_or_create(
+            "sensor",
+            DOMAIN,
+            f"{DOMAIN}_{account}_{key}",
+            config_entry=mock_config_entry,
+            suggested_object_id=f"{DOMAIN}_{account}_{key}",
+            translation_key=key,
+        )
+
+    _migrate_legacy_entity_ids(hass, mock_config_entry)
+
+    account_hash = hash_account_id(account)
+    for key in ("last_import_time", "data_freshness_days"):
+        migrated = registry.async_get(f"sensor.{DOMAIN}_{account_hash}_{key}")
+        assert migrated is not None
+        assert migrated.unique_id == f"{DOMAIN}_{account_hash}_{key}"
+        assert registry.async_get(f"sensor.{DOMAIN}_{account}_{key}") is None

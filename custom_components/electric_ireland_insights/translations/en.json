@@ -29,7 +29,7 @@
         },
         "data_description": {
           "import_full_history": "Fetch all available historical data from your bill periods. Default is ON. This runs in the background, issues many sequential requests to the Electric Ireland portal, and may take 10–30 minutes. There is a small rate-limit risk during this one-time import. Uncheck to import only the last 30 days now; you can trigger full history later via Reconfigure.",
-          "discount_percentage": "Enter your discount percentage (e.g., 20 for 20% Saver discount). This is saved as an integration option, not setup data. A separate '_cost_discounted' statistic will be created with the discount applied. Standing charges are not included."
+          "discount_percentage": "Enter your discount percentage (e.g., 20 for 20% Saver discount). This is saved as an integration option, not setup data. A separate '_cost_discounted' statistic will be created with the discount applied. Setting it to 0 removes existing discounted statistics; use the gross statistic instead. Standing charges are not included."
         }
       },
       "reauth_confirm": {
@@ -72,12 +72,12 @@
     "step": {
       "init": {
         "title": "Electric Ireland Insights Options",
-        "description": "Update your plan discount percentage. Home Assistant reloads the integration after this changes. To recalculate all historical discounted cost data, update this option and then use Reconfigure → Import full history.",
+        "description": "Update your plan discount percentage. Setting it to 0 removes previously-created discounted statistics for this account; use the gross statistic instead. Home Assistant reloads the integration after this change. To recalculate all historical discounted cost data, update this option and then use Reconfigure → Import full history.",
         "data": {
           "discount_percentage": "Discount percentage (%)"
         },
         "data_description": {
-          "discount_percentage": "Enter your discount percentage (e.g., 20 for 20% Saver discount). A separate '_cost_discounted' statistic is created with the discount applied. Standing charges are not included."
+          "discount_percentage": "Enter your discount percentage (e.g., 20 for 20% Saver discount). A separate '_cost_discounted' statistic is created with the discount applied. Setting it to 0 removes existing discounted statistics; use the gross statistic instead. Standing charges are not included."
         }
       }
     }

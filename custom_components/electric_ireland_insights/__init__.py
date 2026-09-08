@@ -8,8 +8,9 @@ import homeassistant.helpers.config_validation as cv
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
 
-from .const import DOMAIN, _redact_id
+from .const import DOMAIN, _redact_id, hash_account_id
 from .coordinator import ElectricIrelandCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -20,17 +21,56 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 type ElectricIrelandConfigEntry = ConfigEntry[ElectricIrelandCoordinator]
 
+_LEGACY_DIAGNOSTIC_ENTITY_KEYS = frozenset({"last_import_time", "data_freshness_days"})
+
+
+def _migrate_legacy_entity_ids(hass: HomeAssistant, entry: ElectricIrelandConfigEntry) -> None:
+    """Rename legacy diagnostic entity IDs that exposed the account number."""
+    registry = async_get_entity_registry(hass)
+    account = entry.data["account_number"]
+    account_hash = hash_account_id(account)
+    legacy_prefix = f"sensor.{DOMAIN}_{account}_"
+
+    for entity in tuple(registry.entities.values()):
+        key = entity.translation_key
+        if (
+            entity.config_entry_id != entry.entry_id
+            or entity.platform != DOMAIN
+            or key not in _LEGACY_DIAGNOSTIC_ENTITY_KEYS
+            or not entity.entity_id.startswith(legacy_prefix)
+        ):
+            continue
+
+        new_entity_id = f"sensor.{DOMAIN}_{account_hash}_{key}"
+        new_unique_id = f"{DOMAIN}_{account_hash}_{key}"
+        registered_entity_id = registry.async_get_entity_id("sensor", DOMAIN, new_unique_id)
+        if registered_entity_id not in (None, entity.entity_id):
+            _LOGGER.warning("Could not migrate legacy diagnostic entity key=%s", key)
+            continue
+        if registry.async_get(new_entity_id) not in (None, entity):
+            _LOGGER.warning("Could not migrate legacy diagnostic entity key=%s", key)
+            continue
+
+        registry.async_update_entity(
+            entity.entity_id,
+            new_entity_id=new_entity_id,
+            new_unique_id=new_unique_id,
+        )
+        _LOGGER.info("Migrated legacy diagnostic entity key=%s to a privacy-safe ID", key)
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ElectricIrelandConfigEntry) -> bool:
     _LOGGER.debug(
         "Setting up Electric Ireland entry, account=%s",
         _redact_id(entry.data["account_number"]),
     )
+    _migrate_legacy_entity_ids(hass, entry)
     coordinator = ElectricIrelandCoordinator(hass, entry)
 
     entry.runtime_data = coordinator
 
     try:
+        await coordinator.async_clear_discounted_statistics()
         await coordinator.async_config_entry_first_refresh()
     except Exception:
         await coordinator.async_close()

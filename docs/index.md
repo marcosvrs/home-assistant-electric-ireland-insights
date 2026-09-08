@@ -96,9 +96,11 @@ The integration imports data as **external statistics** directly into the HA rec
 |---|---|---|
 | `electric_ireland_insights:{account_hash}_consumption` | Hourly electricity consumption (total) | kWh |
 | `electric_ireland_insights:{account_hash}_cost` | Hourly electricity cost (gross with VAT, no standing charge) | EUR |
-| `electric_ireland_insights:{account_hash}_cost_discounted` | Hourly electricity cost with your configured discount applied (only created when discount > 0) | EUR |
+| `electric_ireland_insights:{account_hash}_cost_discounted` | Hourly electricity cost with your configured discount applied | EUR |
 
 `{account_hash}` is the first 16 characters of the SHA-256 hash of your account number. The raw account number is not used in HA-facing identifiers.
+
+Setting the discount to **0%** removes the account's existing discounted external statistics. Select the gross `_cost` statistic in the Energy Dashboard instead. Re-enabling a discount creates discounted statistics again for subsequent imports; use **Reconfigure → Import full history** if you need historical discounted data rebuilt.
 
 ### Per-tariff breakdown
 
@@ -114,10 +116,10 @@ When the current data window contains time-of-use tariff buckets, the integratio
 | `electric_ireland_insights:{account_hash}_cost_mid_peak` | Mid-peak cost (gross) | EUR |
 | `electric_ireland_insights:{account_hash}_cost_on_peak` | On-peak cost (gross) | EUR |
 | `electric_ireland_insights:{account_hash}_cost_flat_rate` | Flat-rate cost from hours tagged as flat rate within a smart tariff plan (gross) | EUR |
-| `electric_ireland_insights:{account_hash}_cost_off_peak_discounted` | Off-peak cost with discount applied (only created when discount > 0) | EUR |
-| `electric_ireland_insights:{account_hash}_cost_mid_peak_discounted` | Mid-peak cost with discount applied (only created when discount > 0) | EUR |
-| `electric_ireland_insights:{account_hash}_cost_on_peak_discounted` | On-peak cost with discount applied (only created when discount > 0) | EUR |
-| `electric_ireland_insights:{account_hash}_cost_flat_rate_discounted` | Flat-rate cost with discount applied (only created when discount > 0) | EUR |
+| `electric_ireland_insights:{account_hash}_cost_off_peak_discounted` | Off-peak cost with discount applied | EUR |
+| `electric_ireland_insights:{account_hash}_cost_mid_peak_discounted` | Mid-peak cost with discount applied | EUR |
+| `electric_ireland_insights:{account_hash}_cost_on_peak_discounted` | On-peak cost with discount applied | EUR |
+| `electric_ireland_insights:{account_hash}_cost_flat_rate_discounted` | Flat-rate cost with discount applied | EUR |
 
 - Per-tariff statistics are created **only when the current data window contains at least one non-flat bucket** (off-peak, mid-peak, or on-peak). The integration evaluates this on every poll — it does not permanently label an account as "smart" or "flat rate".
 - If you're on a **flat-rate** tariff (only `flat_rate` buckets appear in the current window), per-tariff statistics are not created (they would be identical to the totals).

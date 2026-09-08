@@ -85,3 +85,9 @@ def mock_setup_entry():
         new=AsyncMock(return_value=True),
     ) as setup_mock:
         yield setup_mock
+
+
+@pytest.fixture
+def persistent_database() -> bool:
+    """Use a file-backed recorder database to avoid in-memory shutdown races."""
+    return True

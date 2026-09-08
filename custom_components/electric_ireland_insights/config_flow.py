@@ -17,6 +17,7 @@ from .const import (
     DEFAULT_DISCOUNT_PERCENTAGE,
     DOMAIN,
     NAME,
+    _get_api_lock,
     _redact_id,
     hash_account_id,
 )
@@ -44,7 +45,10 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
 
         if user_input is not None:
             try:
-                async with async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar()) as session:
+                async with (
+                    _get_api_lock(),
+                    async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar()) as session,
+                ):
                     api = ElectricIrelandAPI(
                         user_input["username"],
                         user_input["password"],
@@ -106,7 +110,10 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
 
     async def _finish_flow(self, account_number: str) -> ConfigFlowResult:
         try:
-            async with async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar()) as session:
+            async with (
+                _get_api_lock(),
+                async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar()) as session,
+            ):
                 api = ElectricIrelandAPI(
                     self._username,
                     self._password,
@@ -172,7 +179,10 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
         if user_input is not None:
             new_data = {**reauth_entry.data, "password": user_input["password"]}
             try:
-                async with async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar()) as session:
+                async with (
+                    _get_api_lock(),
+                    async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar()) as session,
+                ):
                     api = ElectricIrelandAPI(
                         new_data["username"],
                         new_data["password"],
@@ -217,7 +227,10 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
             force_rediscovery = user_input.get("force_rediscovery", False)
 
             try:
-                async with async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar()) as session:
+                async with (
+                    _get_api_lock(),
+                    async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar()) as session,
+                ):
                     api = ElectricIrelandAPI(
                         username,
                         password,

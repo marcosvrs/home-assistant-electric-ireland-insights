@@ -12,7 +12,9 @@ import aiohttp
 from homeassistant.components.recorder.models import StatisticData, StatisticMeanType, StatisticMetaData
 from homeassistant.components.recorder.statistics import (
     async_add_external_statistics,
+    clear_statistics,
     get_last_statistics,
+    get_metadata,
     statistics_during_period,
 )
 from homeassistant.config_entries import ConfigEntry
@@ -35,6 +37,7 @@ from .const import (
     INITIAL_LOOKBACK_DAYS,
     LOOKUP_DAYS,
     SCAN_INTERVAL,
+    _get_api_lock,
     _redact_id,
     hash_account_id,
 )
@@ -88,7 +91,50 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
         self._bill_periods: list[BillPeriod] = []
         self._bill_periods_fetched_at: datetime | None = None
         self._session = async_create_clientsession(hass, cookie_jar=aiohttp.CookieJar())
+        self._api_lock = _get_api_lock()
         self._closed = False
+
+    def _update_cached_meter_ids(self, discovered_ids: MeterIds) -> None:
+        """Persist meter identifiers discovered during authentication."""
+        new_data = {
+            **dict(self._config_entry.data),
+            "partner_id": discovered_ids["partner"],
+            "contract_id": discovered_ids["contract"],
+            "premise_id": discovered_ids["premise"],
+        }
+        self.hass.config_entries.async_update_entry(self._config_entry, data=new_data)
+        self._bill_periods = []
+        self._bill_periods_fetched_at = None
+        _LOGGER.debug(
+            "Updated cached meter IDs: partner=%s",
+            _redact_id(discovered_ids["partner"]),
+        )
+
+    async def async_clear_discounted_statistics(self) -> None:
+        """Remove stale discounted statistics when no discount is configured."""
+        discount = self._config_entry.options.get(CONF_DISCOUNT_PERCENTAGE, DEFAULT_DISCOUNT_PERCENTAGE)
+        if discount:
+            return
+
+        metadata = await get_instance(self.hass).async_add_executor_job(
+            partial(get_metadata, self.hass, statistic_source=DOMAIN)
+        )
+        statistic_prefix = f"{DOMAIN}:{self._account_hash}_cost"
+        statistic_ids = sorted(
+            statistic_id
+            for statistic_id in metadata
+            if statistic_id.startswith(statistic_prefix) and statistic_id.endswith("_discounted")
+        )
+        if not statistic_ids:
+            return
+
+        await get_instance(self.hass).async_add_executor_job(
+            partial(clear_statistics, get_instance(self.hass), statistic_ids)
+        )
+        _LOGGER.info(
+            "Removed %d discounted statistics because the configured discount is 0",
+            len(statistic_ids),
+        )
 
     def _check_data_gap(self, result: CoordinatorData) -> None:
         latest_ts = result.get("latest_data_timestamp")
@@ -116,6 +162,10 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                 async_delete_issue(self.hass, DOMAIN, f"data_gap_{self._account_hash}")
 
     async def _async_update_data(self) -> CoordinatorData:
+        async with self._api_lock:
+            return await self._async_update_data_locked()
+
+    async def _async_update_data_locked(self) -> CoordinatorData:
         session = self._session
         was_successful = self._last_update_success
 
@@ -161,19 +211,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                 meter_ids, discovered_ids = await self._api.authenticate(session, None)
 
             if discovered_ids is not None:
-                new_data = {
-                    **dict(self._config_entry.data),
-                    "partner_id": discovered_ids["partner"],
-                    "contract_id": discovered_ids["contract"],
-                    "premise_id": discovered_ids["premise"],
-                }
-                self.hass.config_entries.async_update_entry(self._config_entry, data=new_data)
-                self._bill_periods = []
-                self._bill_periods_fetched_at = None
-                _LOGGER.debug(
-                    "Updated cached meter IDs: partner=%s",
-                    _redact_id(discovered_ids["partner"]),
-                )
+                self._update_cached_meter_ids(discovered_ids)
 
             bill_period_stale = (
                 self._bill_periods_fetched_at is None
@@ -239,18 +277,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                         None,
                     )
                     if discovered_ids is not None:
-                        new_data = {
-                            **dict(self._config_entry.data),
-                            "partner_id": discovered_ids["partner"],
-                            "contract_id": discovered_ids["contract"],
-                            "premise_id": discovered_ids["premise"],
-                        }
-                        self.hass.config_entries.async_update_entry(
-                            self._config_entry,
-                            data=new_data,
-                        )
-                        self._bill_periods = []
-                        self._bill_periods_fetched_at = None
+                        self._update_cached_meter_ids(discovered_ids)
                     day_data = await self._api.get_hourly_usage(
                         session,
                         meter_ids,
@@ -387,6 +414,10 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
         await _close_session(self._session)
 
     async def async_tariff_backfill(self, *, full_history: bool = False) -> None:
+        async with self._api_lock:
+            await self._async_tariff_backfill(full_history=full_history)
+
+    async def _async_tariff_backfill(self, *, full_history: bool = False) -> None:
         """Background backfill of historical data.
 
         When full_history is True, uses all available bill periods (6-13 months).
@@ -399,7 +430,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
         session = async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar())
         try:
             try:
-                meter_ids, _ = await self._api.authenticate(session, None)
+                meter_ids, discovered_ids = await self._api.authenticate(session, None)
             except InvalidAuth:
                 _LOGGER.warning("Background backfill failed due to invalid auth")
                 async_create_issue(
@@ -424,6 +455,9 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                     translation_placeholders={"account": self._account_hash},
                 )
                 return
+
+            if discovered_ids is not None:
+                self._update_cached_meter_ids(discovered_ids)
 
             if full_history:
                 try:
@@ -501,7 +535,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                     _LOGGER.debug("Backfill: CachedIdsInvalid on %s, re-authenticating", target_date)
                     session.cookie_jar.clear()
                     try:
-                        meter_ids, _ = await self._api.authenticate(session, None)
+                        meter_ids, discovered_ids = await self._api.authenticate(session, None)
                     except (InvalidAuth, CannotConnect):
                         _LOGGER.warning(
                             "Backfill: re-authentication failed on %s, aborting backfill",
@@ -517,6 +551,8 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                             translation_placeholders={"account": self._account_hash},
                         )
                         return
+                    if discovered_ids is not None:
+                        self._update_cached_meter_ids(discovered_ids)
                     day_data = await self._api.get_hourly_usage(session, meter_ids, target_date)
                     datapoints.extend(day_data)
 
@@ -627,6 +663,33 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                     discount=discount,
                 )
 
+    async def _async_get_base_sum(self, statistic_id: str, overlap_start: datetime) -> float:
+        """Return the cumulative sum immediately before the incoming window."""
+        statistic_types: set[Literal["change", "last_reset", "max", "mean", "min", "state", "sum"]] = {"sum"}
+        search_starts = (
+            overlap_start - timedelta(days=LOOKUP_DAYS + 1),
+            datetime(1970, 1, 1, tzinfo=UTC),
+        )
+        for index, start_time in enumerate(search_starts):
+            existing_before = await get_instance(self.hass).async_add_executor_job(
+                partial(
+                    statistics_during_period,
+                    self.hass,
+                    start_time,
+                    overlap_start,
+                    {statistic_id},
+                    "hour",
+                    None,
+                    statistic_types,
+                )
+            )
+            rows = (existing_before or {}).get(statistic_id, [])
+            if rows:
+                return rows[-1].get("sum") or 0.0
+            if index == len(search_starts) - 1:
+                return 0.0
+        return 0.0
+
     async def _insert_statistics(
         self,
         datapoints: list[ElectricIrelandDatapoint],
@@ -654,24 +717,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
         filtered.sort(key=lambda x: x[0])
         overlap_start = filtered[0][0]
 
-        stat_types: set[Literal["change", "last_reset", "max", "mean", "min", "state", "sum"]] = {"sum"}
-        existing_before = await get_instance(self.hass).async_add_executor_job(
-            partial(
-                statistics_during_period,
-                self.hass,
-                datetime(1970, 1, 1, tzinfo=UTC),
-                overlap_start,
-                {statistic_id},
-                "hour",
-                None,
-                stat_types,
-            )
-        )
-
-        base_sum = 0.0
-        rows = (existing_before or {}).get(statistic_id, [])
-        if rows:
-            base_sum = rows[-1].get("sum") or 0.0
+        base_sum = await self._async_get_base_sum(statistic_id, overlap_start)
 
         statistics: list[StatisticData] = []
         current_sum = base_sum
