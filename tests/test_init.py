@@ -320,3 +320,65 @@ async def test_duplicate_legacy_diagnostic_entity_is_removed(hass, mock_config_e
     retained = registry.async_get(hashed.entity_id)
     assert retained is not None
     assert retained.unique_id == f"{DOMAIN}_{account_hash}_{key}"
+
+
+async def test_custom_legacy_diagnostic_entity_id_is_preserved(hass, mock_config_entry):
+    """A customized legacy entity ID is preserved while its unique ID is migrated."""
+    mock_config_entry.add_to_hass(hass)
+    registry = async_get_entity_registry(hass)
+    account = mock_config_entry.data["account_number"]
+    account_hash = hash_account_id(account)
+    key = "last_import_time"
+
+    legacy = registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        f"{DOMAIN}_{account}_{key}",
+        config_entry=mock_config_entry,
+        suggested_object_id=f"{DOMAIN}_{account}_{key}",
+        translation_key=key,
+    )
+    custom_entity_id = "sensor.my_custom_last_import"
+    registry.async_update_entity(legacy.entity_id, new_entity_id=custom_entity_id)
+
+    _migrate_legacy_entity_ids(hass, mock_config_entry)
+
+    migrated = registry.async_get(custom_entity_id)
+    assert migrated is not None
+    assert migrated.unique_id == f"{DOMAIN}_{account_hash}_{key}"
+    assert registry.async_get(f"sensor.{DOMAIN}_{account_hash}_{key}") is None
+
+
+async def test_custom_legacy_entity_wins_over_duplicate_hashed_entity(hass, mock_config_entry):
+    """A customized legacy entity keeps its ID when a hashed duplicate exists."""
+    mock_config_entry.add_to_hass(hass)
+    registry = async_get_entity_registry(hass)
+    account = mock_config_entry.data["account_number"]
+    account_hash = hash_account_id(account)
+    key = "last_import_time"
+
+    hashed = registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        f"{DOMAIN}_{account_hash}_{key}",
+        config_entry=mock_config_entry,
+        suggested_object_id=f"{DOMAIN}_{account_hash}_{key}",
+        translation_key=key,
+    )
+    legacy = registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        f"{DOMAIN}_{account}_{key}",
+        config_entry=mock_config_entry,
+        suggested_object_id=f"{DOMAIN}_{account}_{key}",
+        translation_key=key,
+    )
+    custom_entity_id = "sensor.my_custom_last_import"
+    registry.async_update_entity(legacy.entity_id, new_entity_id=custom_entity_id)
+
+    _migrate_legacy_entity_ids(hass, mock_config_entry)
+
+    migrated = registry.async_get(custom_entity_id)
+    assert migrated is not None
+    assert migrated.unique_id == f"{DOMAIN}_{account_hash}_{key}"
+    assert registry.async_get(hashed.entity_id) is None

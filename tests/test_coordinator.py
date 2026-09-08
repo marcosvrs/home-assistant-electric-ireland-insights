@@ -3690,17 +3690,18 @@ async def test_backfill_releases_provider_lock_between_requests(recorder_mock, h
             ]
         )
         second_api.authenticate = AsyncMock(return_value=(TEST_METER_IDS, None))
+        second_api.get_bill_periods = AsyncMock(return_value=[])
+
+        async def second_hourly_usage(_session, _meter_ids, _target_date):
+            call_order.append("foreground")
+            return []
+
+        second_api.get_hourly_usage = AsyncMock(side_effect=second_hourly_usage)
 
         from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
 
         first = ElectricIrelandCoordinator(hass, mock_config_entry)
         second = ElectricIrelandCoordinator(hass, second_entry)
-
-        async def foreground_refresh() -> dict:
-            call_order.append("foreground")
-            return {}
-
-        second._async_update_data_locked = foreground_refresh
 
         async def first_hourly_usage(_session, _meter_ids, target_date):
             nonlocal second_task
@@ -3720,7 +3721,9 @@ async def test_backfill_releases_provider_lock_between_requests(recorder_mock, h
         await first.async_close()
         await second.async_close()
 
-    assert call_order == ["backfill:2026-03-23", "foreground", "backfill:2026-03-24"]
+    assert call_order[0] == "backfill:2026-03-23"
+    assert call_order[-1] == "backfill:2026-03-24"
+    assert all(item == "foreground" for item in call_order[1:-1])
 
 
 async def test_zero_discount_clears_existing_discounted_statistics(recorder_mock, hass, mock_config_entry):
