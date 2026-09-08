@@ -3857,8 +3857,10 @@ async def test_zero_discount_clears_existing_discounted_statistics(recorder_mock
     mock_config_entry.add_to_hass(hass)
     hass.config_entries.async_update_entry(mock_config_entry, options={"discount_percentage": 0})
     other_account_stat = f"{DOMAIN}:other_cost_discounted"
+    legacy_account_stat = f"{DOMAIN}:{ACCOUNT}_cost_discounted"
     metadata = {
         STAT_ID_COST_DISCOUNTED: {},
+        legacy_account_stat: {},
         f"{DOMAIN}:{ACCOUNT_HASH}_cost_off_peak_discounted": {},
         STAT_ID_COST: {},
         other_account_stat: {},
@@ -3880,6 +3882,7 @@ async def test_zero_discount_clears_existing_discounted_statistics(recorder_mock
 
     assert mock_clear.call_count == 1
     assert mock_clear.call_args.args[1] == [
+        legacy_account_stat,
         STAT_ID_COST_DISCOUNTED,
         f"{DOMAIN}:{ACCOUNT_HASH}_cost_off_peak_discounted",
     ]

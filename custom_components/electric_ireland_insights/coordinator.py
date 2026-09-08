@@ -126,11 +126,15 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
         metadata = await get_instance(self.hass).async_add_executor_job(
             partial(get_metadata, self.hass, statistic_source=DOMAIN)
         )
-        statistic_prefix = f"{DOMAIN}:{self._account_hash}_cost"
+        statistic_prefixes = (
+            f"{DOMAIN}:{self._account_hash}_cost",
+            f"{DOMAIN}:{self._account}_cost",
+        )
         statistic_ids = sorted(
             statistic_id
             for statistic_id in metadata
-            if statistic_id.startswith(statistic_prefix) and statistic_id.endswith("_discounted")
+            if any(statistic_id.startswith(prefix) for prefix in statistic_prefixes)
+            and statistic_id.endswith("_discounted")
         )
         if not statistic_ids:
             return

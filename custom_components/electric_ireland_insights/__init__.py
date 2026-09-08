@@ -8,6 +8,11 @@ import homeassistant.helpers.config_validation as cv
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import async_get as async_get_device_registry
+from homeassistant.helpers.entity_registry import (
+    EntityRegistry,
+    RegistryEntry,
+)
 from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
 
 from .const import CONF_DISCOUNT_PERCENTAGE, DOMAIN, _redact_id, hash_account_id
@@ -43,6 +48,71 @@ def _migrate_legacy_discount_to_options(hass: HomeAssistant, entry: ElectricIrel
     _LOGGER.info("Migrated legacy discount percentage into config entry options")
 
 
+def _migrate_legacy_device(hass: HomeAssistant, entry: ElectricIrelandConfigEntry) -> None:
+    """Migrate a raw-account device to privacy-safe identifiers."""
+    device_registry = async_get_device_registry(hass)
+    account = entry.data["account_number"]
+    account_identifier = (DOMAIN, account)
+    hashed_identifier = (DOMAIN, hash_account_id(account))
+    legacy_device = device_registry.async_get_device(identifiers={account_identifier})
+    if legacy_device is None:
+        return
+
+    hashed_device = device_registry.async_get_device(identifiers={hashed_identifier})
+    if hashed_device is not None and hashed_device.id != legacy_device.id:
+        if legacy_device.config_entries == {entry.entry_id} and hashed_device.config_entries == {entry.entry_id}:
+            entity_registry = async_get_entity_registry(hass)
+            for entity in tuple(entity_registry.entities.values()):
+                if entity.device_id == legacy_device.id:
+                    entity_registry.async_update_entity(entity.entity_id, device_id=hashed_device.id)
+            device_registry.async_update_device(
+                hashed_device.id,
+                area_id=legacy_device.area_id if legacy_device.area_id is not None else hashed_device.area_id,
+                disabled_by=legacy_device.disabled_by
+                if legacy_device.disabled_by is not None
+                else hashed_device.disabled_by,
+                labels=legacy_device.labels | hashed_device.labels,
+                name_by_user=legacy_device.name_by_user
+                if legacy_device.name_by_user is not None
+                else hashed_device.name_by_user,
+            )
+            device_registry.async_remove_device(legacy_device.id)
+            device_registry.deleted_devices.pop(legacy_device.id, None)
+            _LOGGER.info("Merged duplicate legacy device into privacy-safe device")
+        else:
+            _LOGGER.warning("Could not migrate legacy device: privacy-safe identifier is already in use")
+        return
+
+    new_name = legacy_device.name.replace(account, hashed_identifier[1]) if legacy_device.name else None
+    new_serial_number = hashed_identifier[1] if legacy_device.serial_number == account else legacy_device.serial_number
+    device_registry.async_update_device(
+        legacy_device.id,
+        new_identifiers=(legacy_device.identifiers - {account_identifier}) | {hashed_identifier},
+        name=new_name,
+        serial_number=new_serial_number,
+    )
+    _LOGGER.info("Migrated legacy device to privacy-safe identifier")
+
+
+def _merge_entity_customizations(
+    registry: EntityRegistry,
+    source: RegistryEntry,
+    target: RegistryEntry,
+) -> None:
+    """Preserve user registry customizations while removing a duplicate."""
+    registry.async_update_entity(
+        target.entity_id,
+        aliases=source.aliases | target.aliases,
+        area_id=source.area_id if source.area_id is not None else target.area_id,
+        categories={**target.categories, **source.categories},
+        disabled_by=source.disabled_by if source.disabled_by is not None else target.disabled_by,
+        hidden_by=source.hidden_by if source.hidden_by is not None else target.hidden_by,
+        icon=source.icon if source.icon is not None else target.icon,
+        labels=source.labels | target.labels,
+        name=source.name if source.name is not None else target.name,
+    )
+
+
 def _migrate_legacy_entity_ids(hass: HomeAssistant, entry: ElectricIrelandConfigEntry) -> None:
     """Rename legacy diagnostic entity IDs that exposed the account number."""
     registry = async_get_entity_registry(hass)
@@ -68,6 +138,7 @@ def _migrate_legacy_entity_ids(hass: HomeAssistant, entry: ElectricIrelandConfig
             registered_entity = registry.async_get(registered_entity_id)
             if registered_entity is not None and registered_entity.config_entry_id == entry.entry_id:
                 if entity.entity_id == legacy_entity_id:
+                    _merge_entity_customizations(registry, entity, registered_entity)
                     registry.async_remove(entity.entity_id)
                     _LOGGER.info("Removed duplicate legacy diagnostic entity key=%s", key)
                 else:
@@ -97,6 +168,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ElectricIrelandConfigEnt
         _redact_id(entry.data["account_number"]),
     )
     _migrate_legacy_discount_to_options(hass, entry)
+    _migrate_legacy_device(hass, entry)
     _migrate_legacy_entity_ids(hass, entry)
     coordinator = ElectricIrelandCoordinator(hass, entry)
 

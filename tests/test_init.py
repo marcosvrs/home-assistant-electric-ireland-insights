@@ -4,10 +4,16 @@ import logging
 from unittest.mock import AsyncMock, patch
 
 from homeassistant.config_entries import ConfigEntryState
+from homeassistant.helpers.device_registry import async_get as async_get_device_registry
+from homeassistant.helpers.entity_registry import (
+    RegistryEntryDisabler,
+    RegistryEntryHider,
+)
 from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
 from pytest_homeassistant_custom_component.components.recorder.common import async_wait_recording_done
 
 from custom_components.electric_ireland_insights import (
+    _migrate_legacy_device,
     _migrate_legacy_discount_to_options,
     _migrate_legacy_entity_ids,
 )
@@ -351,6 +357,103 @@ async def test_unload_entry_closes_session_after_platforms(
         assert order == ["unload", "close"]
 
 
+async def test_legacy_device_registry_record_is_migrated(hass, mock_config_entry):
+    """A raw-account device becomes the privacy-safe device in place."""
+    mock_config_entry.add_to_hass(hass)
+    registry = async_get_device_registry(hass)
+    account = mock_config_entry.data["account_number"]
+    legacy = registry.async_get_or_create(
+        config_entry_id=mock_config_entry.entry_id,
+        identifiers={(DOMAIN, account)},
+        name=f"Electric Ireland Insights ({account})",
+    )
+    registry.async_update_device(legacy.id, name_by_user="Main meter")
+
+    _migrate_legacy_device(hass, mock_config_entry)
+
+    migrated = registry.async_get_device(identifiers={(DOMAIN, ACCOUNT_HASH)})
+    assert migrated is not None
+    assert migrated.id == legacy.id
+    assert migrated.identifiers == {(DOMAIN, ACCOUNT_HASH)}
+    assert migrated.name == f"Electric Ireland Insights ({ACCOUNT_HASH})"
+    assert migrated.name_by_user == "Main meter"
+    assert registry.async_get_device(identifiers={(DOMAIN, account)}) is None
+
+
+async def test_duplicate_legacy_device_is_merged(hass, mock_config_entry):
+    """A same-entry duplicate device is merged without losing its customizations."""
+    mock_config_entry.add_to_hass(hass)
+    device_registry = async_get_device_registry(hass)
+    entity_registry = async_get_entity_registry(hass)
+    account = mock_config_entry.data["account_number"]
+    legacy = device_registry.async_get_or_create(
+        config_entry_id=mock_config_entry.entry_id,
+        identifiers={(DOMAIN, account)},
+        name=f"Electric Ireland Insights ({account})",
+    )
+    device_registry.async_update_device(legacy.id, name_by_user="Main meter")
+    hashed = device_registry.async_get_or_create(
+        config_entry_id=mock_config_entry.entry_id,
+        identifiers={(DOMAIN, ACCOUNT_HASH)},
+        name=f"Electric Ireland Insights ({ACCOUNT_HASH})",
+    )
+    entity = entity_registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        "legacy-device-entity",
+        config_entry=mock_config_entry,
+        suggested_object_id="legacy_device_entity",
+    )
+    entity_registry.async_update_entity(entity.entity_id, device_id=legacy.id)
+
+    _migrate_legacy_device(hass, mock_config_entry)
+
+    migrated = device_registry.async_get_device(identifiers={(DOMAIN, ACCOUNT_HASH)})
+    assert migrated is not None
+    assert migrated.id == hashed.id
+    assert migrated.name_by_user == "Main meter"
+    moved_entity = entity_registry.async_get(entity.entity_id)
+    assert moved_entity is not None
+    assert moved_entity.device_id == hashed.id
+    assert device_registry.async_get_device(identifiers={(DOMAIN, account)}) is None
+    assert device_registry.deleted_devices.get(legacy.id) is None
+
+
+async def test_legacy_device_migration_leaves_cross_entry_collision(hass, mock_config_entry):
+    """A device identifier owned by another entry is not merged destructively."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    mock_config_entry.add_to_hass(hass)
+    other_entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "username": "other@test.com",
+            "password": "testpass",
+            "account_number": "100000002",
+        },
+        unique_id="other-account",
+    )
+    other_entry.add_to_hass(hass)
+
+    registry = async_get_device_registry(hass)
+    account = mock_config_entry.data["account_number"]
+    legacy = registry.async_get_or_create(
+        config_entry_id=mock_config_entry.entry_id,
+        identifiers={(DOMAIN, account)},
+        name=f"Electric Ireland Insights ({account})",
+    )
+    hashed = registry.async_get_or_create(
+        config_entry_id=other_entry.entry_id,
+        identifiers={(DOMAIN, ACCOUNT_HASH)},
+        name=f"Electric Ireland Insights ({ACCOUNT_HASH})",
+    )
+
+    _migrate_legacy_device(hass, mock_config_entry)
+
+    assert registry.async_get_device(identifiers={(DOMAIN, account)}) is legacy
+    assert registry.async_get_device(identifiers={(DOMAIN, ACCOUNT_HASH)}) is hashed
+
+
 async def test_legacy_diagnostic_entity_ids_are_migrated(hass, mock_config_entry):
     """Legacy diagnostic IDs are renamed without retaining raw account IDs."""
     mock_config_entry.add_to_hass(hass)
@@ -378,7 +481,7 @@ async def test_legacy_diagnostic_entity_ids_are_migrated(hass, mock_config_entry
 
 
 async def test_duplicate_legacy_diagnostic_entity_is_removed(hass, mock_config_entry):
-    """A duplicate raw-account entity is removed when the hashed entity exists."""
+    """A duplicate raw-account entity is removed after customizations transfer."""
     mock_config_entry.add_to_hass(hass)
     registry = async_get_entity_registry(hass)
     account = mock_config_entry.data["account_number"]
@@ -401,6 +504,15 @@ async def test_duplicate_legacy_diagnostic_entity_is_removed(hass, mock_config_e
         suggested_object_id=f"{DOMAIN}_{account}_{key}",
         translation_key=key,
     )
+    registry.async_update_entity(
+        legacy.entity_id,
+        aliases={"sensor.legacy_import_time"},
+        disabled_by=RegistryEntryDisabler.USER,
+        hidden_by=RegistryEntryHider.USER,
+        icon="mdi:flash",
+        labels={"important"},
+        name="Custom import time",
+    )
 
     _migrate_legacy_entity_ids(hass, mock_config_entry)
 
@@ -408,6 +520,12 @@ async def test_duplicate_legacy_diagnostic_entity_is_removed(hass, mock_config_e
     retained = registry.async_get(hashed.entity_id)
     assert retained is not None
     assert retained.unique_id == f"{DOMAIN}_{account_hash}_{key}"
+    assert retained.aliases == {"sensor.legacy_import_time"}
+    assert retained.disabled_by is RegistryEntryDisabler.USER
+    assert retained.hidden_by is RegistryEntryHider.USER
+    assert retained.icon == "mdi:flash"
+    assert retained.labels == {"important"}
+    assert retained.name == "Custom import time"
 
 
 async def test_custom_legacy_diagnostic_entity_id_is_preserved(hass, mock_config_entry):
