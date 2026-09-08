@@ -110,9 +110,16 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
             _redact_id(discovered_ids["partner"]),
         )
 
+    def _get_discount_percentage(self) -> int:
+        """Return the configured discount, including legacy entry data."""
+        discount = self._config_entry.options.get(CONF_DISCOUNT_PERCENTAGE)
+        if discount is None:
+            discount = self._config_entry.data.get(CONF_DISCOUNT_PERCENTAGE, DEFAULT_DISCOUNT_PERCENTAGE)
+        return int(discount)
+
     async def async_clear_discounted_statistics(self) -> None:
         """Remove stale discounted statistics when no discount is configured."""
-        discount = self._config_entry.options.get(CONF_DISCOUNT_PERCENTAGE, DEFAULT_DISCOUNT_PERCENTAGE)
+        discount = self._get_discount_percentage()
         if discount:
             return
 
@@ -329,7 +336,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                 f"{DOMAIN}:{self._account_hash}_cost",
                 "EUR",
             )
-            discount = self._config_entry.options.get(CONF_DISCOUNT_PERCENTAGE, DEFAULT_DISCOUNT_PERCENTAGE)
+            discount = self._get_discount_percentage()
             if discount:
                 await self._insert_statistics(
                     datapoints,
@@ -414,8 +421,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
         await _close_session(self._session)
 
     async def async_tariff_backfill(self, *, full_history: bool = False) -> None:
-        async with self._api_lock:
-            await self._async_tariff_backfill(full_history=full_history)
+        await self._async_tariff_backfill(full_history=full_history)
 
     async def _async_tariff_backfill(self, *, full_history: bool = False) -> None:
         """Background backfill of historical data.
@@ -430,7 +436,8 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
         session = async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar())
         try:
             try:
-                meter_ids, discovered_ids = await self._api.authenticate(session, None)
+                async with self._api_lock:
+                    meter_ids, discovered_ids = await self._api.authenticate(session, None)
             except InvalidAuth:
                 _LOGGER.warning("Background backfill failed due to invalid auth")
                 async_create_issue(
@@ -461,7 +468,8 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
 
             if full_history:
                 try:
-                    bill_periods = await self._api.get_bill_periods(session, meter_ids)
+                    async with self._api_lock:
+                        bill_periods = await self._api.get_bill_periods(session, meter_ids)
                 except CannotConnect:
                     _LOGGER.warning("Full history backfill: cannot fetch bill periods, will retry")
                     async_create_issue(
@@ -479,7 +487,8 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                     return
             else:
                 try:
-                    bill_periods = await self._api.get_bill_periods(session, meter_ids)
+                    async with self._api_lock:
+                        bill_periods = await self._api.get_bill_periods(session, meter_ids)
                 except CannotConnect:
                     bill_periods = []
 
@@ -523,7 +532,8 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
             failed_dates: list[date] = []
             for target_date in dates:
                 try:
-                    day_data = await self._api.get_hourly_usage(session, meter_ids, target_date)
+                    async with self._api_lock:
+                        day_data = await self._api.get_hourly_usage(session, meter_ids, target_date)
                     datapoints.extend(day_data)
                 except CannotConnect:
                     _LOGGER.warning(
@@ -535,7 +545,8 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                     _LOGGER.debug("Backfill: CachedIdsInvalid on %s, re-authenticating", target_date)
                     session.cookie_jar.clear()
                     try:
-                        meter_ids, discovered_ids = await self._api.authenticate(session, None)
+                        async with self._api_lock:
+                            meter_ids, discovered_ids = await self._api.authenticate(session, None)
                     except (InvalidAuth, CannotConnect):
                         _LOGGER.warning(
                             "Backfill: re-authentication failed on %s, aborting backfill",
@@ -553,7 +564,8 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                         return
                     if discovered_ids is not None:
                         self._update_cached_meter_ids(discovered_ids)
-                    day_data = await self._api.get_hourly_usage(session, meter_ids, target_date)
+                    async with self._api_lock:
+                        day_data = await self._api.get_hourly_usage(session, meter_ids, target_date)
                     datapoints.extend(day_data)
 
             if datapoints:
@@ -569,7 +581,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                     f"{DOMAIN}:{self._account_hash}_cost",
                     "EUR",
                 )
-                discount = self._config_entry.options.get(CONF_DISCOUNT_PERCENTAGE, DEFAULT_DISCOUNT_PERCENTAGE)
+                discount = self._get_discount_percentage()
                 if discount:
                     await self._insert_statistics(
                         datapoints,

@@ -287,3 +287,36 @@ async def test_legacy_diagnostic_entity_ids_are_migrated(hass, mock_config_entry
         assert migrated is not None
         assert migrated.unique_id == f"{DOMAIN}_{account_hash}_{key}"
         assert registry.async_get(f"sensor.{DOMAIN}_{account}_{key}") is None
+
+
+async def test_duplicate_legacy_diagnostic_entity_is_removed(hass, mock_config_entry):
+    """A duplicate raw-account entity is removed when the hashed entity exists."""
+    mock_config_entry.add_to_hass(hass)
+    registry = async_get_entity_registry(hass)
+    account = mock_config_entry.data["account_number"]
+    account_hash = hash_account_id(account)
+    key = "last_import_time"
+
+    hashed = registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        f"{DOMAIN}_{account_hash}_{key}",
+        config_entry=mock_config_entry,
+        suggested_object_id=f"{DOMAIN}_{account_hash}_{key}",
+        translation_key=key,
+    )
+    legacy = registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        f"{DOMAIN}_{account}_{key}",
+        config_entry=mock_config_entry,
+        suggested_object_id=f"{DOMAIN}_{account}_{key}",
+        translation_key=key,
+    )
+
+    _migrate_legacy_entity_ids(hass, mock_config_entry)
+
+    assert registry.async_get(legacy.entity_id) is None
+    retained = registry.async_get(hashed.entity_id)
+    assert retained is not None
+    assert retained.unique_id == f"{DOMAIN}_{account_hash}_{key}"

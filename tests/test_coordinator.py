@@ -776,8 +776,8 @@ async def test_cost_discounted_statistic_not_created_when_discount_zero(recorder
     assert abs(stats[STAT_ID_COST][-1]["sum"] - gross_total) < 0.01
 
 
-async def test_cost_discounted_statistic_ignores_legacy_data_discount(recorder_mock, hass, mock_config_entry):
-    """Test legacy data-only discount does not create _cost_discounted."""
+async def test_legacy_data_discount_is_preserved(recorder_mock, hass, mock_config_entry):
+    """A legacy data-only discount is still applied to imported statistics."""
     mock_config_entry.add_to_hass(hass)
     hass.config_entries.async_update_entry(
         mock_config_entry,
@@ -824,7 +824,35 @@ async def test_cost_discounted_statistic_ignores_legacy_data_discount(recorder_m
         {"sum", "state"},
     )
     assert STAT_ID_COST in stats
-    assert STAT_ID_COST_DISCOUNTED not in stats
+    assert STAT_ID_COST_DISCOUNTED in stats
+    gross_total = sum(dp["cost"] for dp in datapoints)
+    assert abs(stats[STAT_ID_COST_DISCOUNTED][-1]["sum"] - gross_total * 0.8) < 0.01
+
+
+async def test_legacy_data_discount_prevents_statistics_cleanup(recorder_mock, hass, mock_config_entry):
+    """A legacy nonzero discount prevents destructive cleanup."""
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        data={**mock_config_entry.data, "discount_percentage": 20},
+        options={},
+    )
+
+    with (
+        patch(
+            "custom_components.electric_ireland_insights.coordinator.get_metadata",
+            return_value={STAT_ID_COST_DISCOUNTED: {}},
+        ),
+        patch("custom_components.electric_ireland_insights.coordinator.clear_statistics") as mock_clear,
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI"),
+        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
+    ):
+        from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
+
+        coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
+        await coordinator.async_clear_discounted_statistics()
+
+    mock_clear.assert_not_called()
 
 
 async def test_cost_discounted_statistic_full_discount(recorder_mock, hass, mock_config_entry):
@@ -3631,8 +3659,8 @@ async def test_none_value_datapoints_produce_no_statistics(recorder_mock, hass, 
     assert STAT_ID_COST not in stats or len(stats[STAT_ID_COST]) == 0
 
 
-async def test_provider_requests_are_serialized_across_coordinators(hass, mock_config_entry):
-    """Foreground refreshes and background backfills share one provider lock."""
+async def test_backfill_releases_provider_lock_between_requests(hass, mock_config_entry):
+    """A foreground refresh can run between serialized backfill requests."""
     mock_config_entry.add_to_hass(hass)
     second_entry = MockConfigEntry(
         domain=DOMAIN,
@@ -3641,47 +3669,54 @@ async def test_provider_requests_are_serialized_across_coordinators(hass, mock_c
     )
     second_entry.add_to_hass(hass)
 
+    call_order: list[str] = []
+    second_task: asyncio.Task[dict] | None = None
+
     with (
-        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI"),
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI") as mock_api_class,
         patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
+        patch(
+            "custom_components.electric_ireland_insights.coordinator.dt_now",
+            return_value=datetime(2026, 3, 25, tzinfo=UTC),
+        ),
     ):
+        first_api = AsyncMock()
+        second_api = AsyncMock()
+        mock_api_class.side_effect = [first_api, second_api]
+        first_api.authenticate = AsyncMock(return_value=(TEST_METER_IDS, None))
+        first_api.get_bill_periods = AsyncMock(
+            return_value=[
+                {"startDate": "2026-03-23", "endDate": "2026-03-24"},
+            ]
+        )
+        second_api.authenticate = AsyncMock(return_value=(TEST_METER_IDS, None))
+
         from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
 
         first = ElectricIrelandCoordinator(hass, mock_config_entry)
         second = ElectricIrelandCoordinator(hass, second_entry)
-        entered = asyncio.Event()
-        release = asyncio.Event()
-        active = 0
-        max_active = 0
 
-        async def hold_refresh() -> dict:
-            nonlocal active, max_active
-            active += 1
-            max_active = max(max_active, active)
-            entered.set()
-            await release.wait()
-            active -= 1
+        async def foreground_refresh() -> dict:
+            call_order.append("foreground")
             return {}
 
-        async def hold_backfill(*, full_history: bool = False) -> None:
-            nonlocal active, max_active
-            active += 1
-            max_active = max(max_active, active)
-            entered.set()
-            await release.wait()
-            active -= 1
+        second._async_update_data_locked = foreground_refresh
 
-        first._async_update_data_locked = hold_refresh
-        second._async_tariff_backfill = hold_backfill
-        tasks = [
-            asyncio.create_task(first._async_update_data()),
-            asyncio.create_task(second.async_tariff_backfill()),
-        ]
-        await asyncio.wait_for(entered.wait(), timeout=1)
-        await asyncio.sleep(0)
-        assert max_active == 1
-        release.set()
-        await asyncio.gather(*tasks)
+        async def first_hourly_usage(_session, _meter_ids, target_date):
+            nonlocal second_task
+            call_order.append(f"backfill:{target_date.isoformat()}")
+            if target_date == date(2026, 3, 23):
+                second_task = asyncio.create_task(second._async_update_data())
+                await asyncio.sleep(0)
+            return []
+
+        first_api.get_hourly_usage = AsyncMock(side_effect=first_hourly_usage)
+
+        await first.async_tariff_backfill(full_history=True)
+        assert second_task is not None
+        await second_task
+
+    assert call_order == ["backfill:2026-03-23", "foreground", "backfill:2026-03-24"]
 
 
 async def test_zero_discount_clears_existing_discounted_statistics(recorder_mock, hass, mock_config_entry):

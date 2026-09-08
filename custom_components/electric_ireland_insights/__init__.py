@@ -44,8 +44,13 @@ def _migrate_legacy_entity_ids(hass: HomeAssistant, entry: ElectricIrelandConfig
         new_entity_id = f"sensor.{DOMAIN}_{account_hash}_{key}"
         new_unique_id = f"{DOMAIN}_{account_hash}_{key}"
         registered_entity_id = registry.async_get_entity_id("sensor", DOMAIN, new_unique_id)
-        if registered_entity_id not in (None, entity.entity_id):
-            _LOGGER.warning("Could not migrate legacy diagnostic entity key=%s", key)
+        if registered_entity_id is not None and registered_entity_id != entity.entity_id:
+            registered_entity = registry.async_get(registered_entity_id)
+            if registered_entity is not None and registered_entity.config_entry_id == entry.entry_id:
+                registry.async_remove(entity.entity_id)
+                _LOGGER.info("Removed duplicate legacy diagnostic entity key=%s", key)
+            else:
+                _LOGGER.warning("Could not migrate legacy diagnostic entity key=%s", key)
             continue
         if registry.async_get(new_entity_id) not in (None, entity):
             _LOGGER.warning("Could not migrate legacy diagnostic entity key=%s", key)
