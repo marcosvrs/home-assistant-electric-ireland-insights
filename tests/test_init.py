@@ -14,11 +14,12 @@ from homeassistant.helpers.entity_registry import async_get as async_get_entity_
 from pytest_homeassistant_custom_component.components.recorder.common import async_wait_recording_done
 
 from custom_components.electric_ireland_insights import (
+    _migrate_legacy_config_entry_identity,
     _migrate_legacy_device,
     _migrate_legacy_discount_to_options,
     _migrate_legacy_entity_ids,
 )
-from custom_components.electric_ireland_insights.const import CONF_DISCOUNT_PERCENTAGE, DOMAIN, hash_account_id
+from custom_components.electric_ireland_insights.const import CONF_DISCOUNT_PERCENTAGE, DOMAIN, NAME, hash_account_id
 
 TEST_METER_IDS = {"partner": "P1", "contract": "C1", "premise": "PR1"}
 ACCOUNT_HASH = hash_account_id("100000001")
@@ -92,6 +93,22 @@ async def test_legacy_discount_migration_does_not_override_options(hass, mock_co
     _migrate_legacy_discount_to_options(hass, mock_config_entry)
 
     assert mock_config_entry.options == {CONF_DISCOUNT_PERCENTAGE: 0}
+
+
+async def test_legacy_config_entry_identity_is_migrated(hass, mock_config_entry):
+    """A raw config-entry identity becomes privacy-safe."""
+    mock_config_entry.add_to_hass(hass)
+    account = mock_config_entry.data["account_number"]
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        title=f"{NAME} ({account})",
+        unique_id=account,
+    )
+
+    _migrate_legacy_config_entry_identity(hass, mock_config_entry)
+
+    assert mock_config_entry.unique_id == ACCOUNT_HASH
+    assert mock_config_entry.title == f"{NAME} ({ACCOUNT_HASH})"
 
 
 async def test_setup_entry_with_full_history_import(recorder_mock, hass, enable_custom_integrations, caplog):
@@ -680,11 +697,31 @@ async def test_custom_legacy_entity_wins_over_duplicate_hashed_entity(hass, mock
     custom_entity_id = "sensor.my_custom_last_import"
     registry.async_update_entity(legacy.entity_id, new_entity_id=custom_entity_id)
 
+    registry.async_update_entity(
+        hashed.entity_id,
+        aliases={"sensor.hashed_import_time"},
+        area_id="hashed-area",
+        categories={"custom": "hashed"},
+        disabled_by=RegistryEntryDisabler.USER,
+        hidden_by=RegistryEntryHider.USER,
+        icon="mdi:flash",
+        labels={"hashed"},
+        name="Hashed import time",
+    )
+
     _migrate_legacy_entity_ids(hass, mock_config_entry)
 
     migrated = registry.async_get(custom_entity_id)
     assert migrated is not None
     assert migrated.unique_id == f"{DOMAIN}_{account_hash}_{key}"
+    assert migrated.aliases == {"sensor.hashed_import_time"}
+    assert migrated.area_id == "hashed-area"
+    assert migrated.categories == {"custom": "hashed"}
+    assert migrated.disabled_by is RegistryEntryDisabler.USER
+    assert migrated.hidden_by is RegistryEntryHider.USER
+    assert migrated.icon == "mdi:flash"
+    assert migrated.labels == {"hashed"}
+    assert migrated.name == "Hashed import time"
     assert registry.async_get(hashed.entity_id) is None
 
 

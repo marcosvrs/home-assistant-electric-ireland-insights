@@ -19,7 +19,7 @@ from homeassistant.helpers.entity_registry import (
 )
 from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
 
-from .const import CONF_DISCOUNT_PERCENTAGE, DOMAIN, _redact_id, hash_account_id
+from .const import CONF_DISCOUNT_PERCENTAGE, DOMAIN, NAME, _redact_id, hash_account_id
 from .coordinator import ElectricIrelandCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -50,6 +50,22 @@ def _migrate_legacy_discount_to_options(hass: HomeAssistant, entry: ElectricIrel
         },
     )
     _LOGGER.info("Migrated legacy discount percentage into config entry options")
+
+
+def _migrate_legacy_config_entry_identity(hass: HomeAssistant, entry: ElectricIrelandConfigEntry) -> None:
+    """Migrate raw config-entry identity to privacy-safe values."""
+    account = entry.data["account_number"]
+    account_hash = hash_account_id(account)
+    legacy_title = f"{NAME} ({account})"
+    if entry.unique_id != account and entry.title != legacy_title:
+        return
+
+    hass.config_entries.async_update_entry(
+        entry,
+        title=f"{NAME} ({account_hash})" if entry.title == legacy_title else entry.title,
+        unique_id=account_hash if entry.unique_id == account else entry.unique_id,
+    )
+    _LOGGER.info("Migrated legacy config entry identity")
 
 
 def _merge_device_registry_customizations(
@@ -89,7 +105,6 @@ def _migrate_legacy_device(hass: HomeAssistant, entry: ElectricIrelandConfigEntr
                     entity_registry.async_update_entity(entity.entity_id, device_id=legacy_device.id)
             _merge_device_registry_customizations(device_registry, legacy_device, hashed_device)
             device_registry.async_remove_device(hashed_device.id)
-            device_registry.deleted_devices.pop(hashed_device.id, None)
             merged_identifiers = (legacy_device.identifiers | hashed_device.identifiers) - {account_identifier}
             merged_identifiers.add(hashed_identifier)
             merged_connections = legacy_device.connections | hashed_device.connections
@@ -176,6 +191,7 @@ def _migrate_legacy_entity_ids(hass: HomeAssistant, entry: ElectricIrelandConfig
                     registry.async_remove(entity.entity_id)
                     _LOGGER.info("Removed duplicate legacy diagnostic entity key=%s", key)
                 else:
+                    _merge_entity_customizations(registry, registered_entity, entity)
                     registry.async_remove(registered_entity.entity_id)
                     registry.async_update_entity(entity.entity_id, new_unique_id=new_unique_id)
                     _LOGGER.info("Migrated customized legacy diagnostic entity key=%s", key)
@@ -201,6 +217,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ElectricIrelandConfigEnt
         "Setting up Electric Ireland entry, account=%s",
         _redact_id(entry.data["account_number"]),
     )
+    _migrate_legacy_config_entry_identity(hass, entry)
     _migrate_legacy_discount_to_options(hass, entry)
     _migrate_legacy_device(hass, entry)
     _migrate_legacy_entity_ids(hass, entry)
