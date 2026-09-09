@@ -17,6 +17,7 @@ from .const import (
     DEFAULT_DISCOUNT_PERCENTAGE,
     DOMAIN,
     NAME,
+    _get_api_lock,
     _redact_id,
     hash_account_id,
 )
@@ -44,7 +45,10 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
 
         if user_input is not None:
             try:
-                async with async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar()) as session:
+                async with (
+                    _get_api_lock(),
+                    async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar()) as session,
+                ):
                     api = ElectricIrelandAPI(
                         user_input["username"],
                         user_input["password"],
@@ -106,7 +110,10 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
 
     async def _finish_flow(self, account_number: str) -> ConfigFlowResult:
         try:
-            async with async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar()) as session:
+            async with (
+                _get_api_lock(),
+                async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar()) as session,
+            ):
                 api = ElectricIrelandAPI(
                     self._username,
                     self._password,
@@ -172,7 +179,10 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
         if user_input is not None:
             new_data = {**reauth_entry.data, "password": user_input["password"]}
             try:
-                async with async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar()) as session:
+                async with (
+                    _get_api_lock(),
+                    async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar()) as session,
+                ):
                     api = ElectricIrelandAPI(
                         new_data["username"],
                         new_data["password"],
@@ -217,7 +227,10 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
             force_rediscovery = user_input.get("force_rediscovery", False)
 
             try:
-                async with async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar()) as session:
+                async with (
+                    _get_api_lock(),
+                    async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar()) as session,
+                ):
                     api = ElectricIrelandAPI(
                         username,
                         password,
@@ -277,9 +290,18 @@ class ElectricIrelandInsightsOptionsFlow(config_entries.OptionsFlowWithReload):
     """Options flow for Electric Ireland Insights."""
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        configured_discount = self.config_entry.options.get(CONF_DISCOUNT_PERCENTAGE)
+        if configured_discount is None:
+            configured_discount = self.config_entry.data.get(CONF_DISCOUNT_PERCENTAGE)
+        if configured_discount is None:
+            configured_discount = DEFAULT_DISCOUNT_PERCENTAGE
+
         if user_input is not None:
+            discount = user_input.get(CONF_DISCOUNT_PERCENTAGE)
+            if discount is None:
+                discount = configured_discount
             options = {
-                CONF_DISCOUNT_PERCENTAGE: int(user_input.get(CONF_DISCOUNT_PERCENTAGE, DEFAULT_DISCOUNT_PERCENTAGE)),
+                CONF_DISCOUNT_PERCENTAGE: int(discount),
             }
             return self.async_create_entry(
                 title="",
@@ -291,15 +313,13 @@ class ElectricIrelandInsightsOptionsFlow(config_entries.OptionsFlowWithReload):
             data_schema=self.add_suggested_values_to_schema(
                 vol.Schema(
                     {
-                        vol.Optional(CONF_DISCOUNT_PERCENTAGE, default=DEFAULT_DISCOUNT_PERCENTAGE): vol.All(
+                        vol.Optional(CONF_DISCOUNT_PERCENTAGE, default=configured_discount): vol.All(
                             vol.Coerce(int), vol.Range(min=0, max=100)
                         ),
                     }
                 ),
                 {
-                    CONF_DISCOUNT_PERCENTAGE: self.config_entry.options.get(
-                        CONF_DISCOUNT_PERCENTAGE, DEFAULT_DISCOUNT_PERCENTAGE
-                    ),
+                    CONF_DISCOUNT_PERCENTAGE: configured_discount,
                 },
             ),
         )

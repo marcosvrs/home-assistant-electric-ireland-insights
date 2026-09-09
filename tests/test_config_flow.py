@@ -7,6 +7,7 @@ import pytest
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResultType, InvalidData
+from pytest_homeassistant_custom_component.components.recorder.common import async_wait_recording_done
 
 from custom_components.electric_ireland_insights.const import (
     CONF_DISCOUNT_PERCENTAGE,
@@ -23,7 +24,7 @@ ACCOUNT = "100000001"
 ACCOUNT_HASH = hash_account_id(ACCOUNT)
 
 
-async def test_user_flow_success(recorder_mock, hass, enable_custom_integrations, mock_config_entry):
+async def test_user_flow_success(recorder_mock, hass, enable_custom_integrations, mock_config_entry, mock_setup_entry):
     """Test successful user flow creates a config entry."""
     with (
         patch("custom_components.electric_ireland_insights.config_flow.ElectricIrelandAPI") as mock_api_class,
@@ -71,7 +72,7 @@ async def test_user_flow_success(recorder_mock, hass, enable_custom_integrations
         ]
 
 
-async def test_user_flow_multi_account(recorder_mock, hass, enable_custom_integrations):
+async def test_user_flow_multi_account(recorder_mock, hass, enable_custom_integrations, mock_setup_entry):
     """Test user flow with multiple accounts shows account selection step."""
     with (
         patch("custom_components.electric_ireland_insights.config_flow.ElectricIrelandAPI") as mock_api_class,
@@ -323,7 +324,9 @@ async def test_user_flow_duplicate_account(recorder_mock, hass, enable_custom_in
         assert result3["reason"] == "already_configured"
 
 
-async def test_reauth_flow_success(recorder_mock, hass, enable_custom_integrations, mock_config_entry):
+async def test_reauth_flow_success(
+    recorder_mock, hass, enable_custom_integrations, mock_config_entry, mock_setup_entry
+):
     """Test reauth flow updates credentials successfully."""
     mock_config_entry.add_to_hass(hass)
 
@@ -383,7 +386,7 @@ async def test_reauth_flow_invalid_auth(recorder_mock, hass, enable_custom_integ
         assert result2["errors"]["base"] == "invalid_auth"
 
 
-async def test_ids_cached_during_config_flow(recorder_mock, hass, enable_custom_integrations):
+async def test_ids_cached_during_config_flow(recorder_mock, hass, enable_custom_integrations, mock_setup_entry):
     """Test that meter IDs discovered during config flow are stored in entry data."""
     meter_ids = {"partner": "P_TEST", "contract": "C_TEST", "premise": "PR_TEST"}
 
@@ -421,7 +424,7 @@ async def test_ids_cached_during_config_flow(recorder_mock, hass, enable_custom_
     assert result3["data"].get("premise_id") == "PR_TEST"
 
 
-async def test_reconfigure_success(recorder_mock, hass, enable_custom_integrations):
+async def test_reconfigure_success(recorder_mock, hass, enable_custom_integrations, mock_setup_entry):
     """Test reconfigure updates password and clears IDs when password changes."""
     from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -480,7 +483,7 @@ async def test_reconfigure_success(recorder_mock, hass, enable_custom_integratio
     mock_api_class.assert_called_once_with("test@test.com", "newpass", ACCOUNT)
 
 
-async def test_reconfigure_force_rediscovery(recorder_mock, hass, enable_custom_integrations):
+async def test_reconfigure_force_rediscovery(recorder_mock, hass, enable_custom_integrations, mock_setup_entry):
     """Test reconfigure clears cached IDs when force_rediscovery is True."""
     from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -755,7 +758,9 @@ async def test_reconfigure_unexpected_exception(recorder_mock, hass, enable_cust
         assert [record.getMessage() for record in caplog.records] == ["Unexpected exception during reconfigure"]
 
 
-async def test_reconfigure_same_password_stores_meter_ids(recorder_mock, hass, enable_custom_integrations):
+async def test_reconfigure_same_password_stores_meter_ids(
+    recorder_mock, hass, enable_custom_integrations, mock_setup_entry
+):
     """Test reconfigure with same password and no force_rediscovery stores fresh meter_ids."""
     from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -815,7 +820,7 @@ async def test_reconfigure_same_password_stores_meter_ids(recorder_mock, hass, e
 # ---------------------------------------------------------------------------
 
 
-async def test_options_step_discount_default_zero(recorder_mock, hass, enable_custom_integrations):
+async def test_options_step_discount_default_zero(recorder_mock, hass, enable_custom_integrations, mock_setup_entry):
     """Test discount percentage defaults to 0 in options step and is stored in entry options."""
     with (
         patch("custom_components.electric_ireland_insights.config_flow.ElectricIrelandAPI") as mock_api_class,
@@ -846,7 +851,9 @@ async def test_options_step_discount_default_zero(recorder_mock, hass, enable_cu
         assert result3["options"] == {"discount_percentage": 0}
 
 
-async def test_options_step_discount_field_has_no_default(recorder_mock, hass, enable_custom_integrations):
+async def test_options_step_discount_field_has_no_default(
+    recorder_mock, hass, enable_custom_integrations, mock_setup_entry
+):
     """Test onboarding discount field has no schema default so it renders unchecked."""
     with (
         patch("custom_components.electric_ireland_insights.config_flow.ElectricIrelandAPI") as mock_api_class,
@@ -882,7 +889,9 @@ async def test_options_step_discount_field_has_no_default(recorder_mock, hass, e
         assert result3["options"]["discount_percentage"] == 0
 
 
-async def test_options_step_discount_stored_in_options(recorder_mock, hass, enable_custom_integrations):
+async def test_options_step_discount_stored_in_options(
+    recorder_mock, hass, enable_custom_integrations, mock_setup_entry
+):
     """Test discount percentage is stored in config entry options, not data."""
     with (
         patch("custom_components.electric_ireland_insights.config_flow.ElectricIrelandAPI") as mock_api_class,
@@ -912,7 +921,7 @@ async def test_options_step_discount_stored_in_options(recorder_mock, hass, enab
         assert result3["options"]["discount_percentage"] == 25
 
 
-async def test_options_flow_updates_discount(recorder_mock, hass, enable_custom_integrations):
+async def test_options_flow_updates_discount(recorder_mock, hass, enable_custom_integrations, mock_setup_entry):
     """Test options flow updates discount_percentage and reloads the entry."""
     from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -947,7 +956,81 @@ async def test_options_flow_updates_discount(recorder_mock, hass, enable_custom_
     assert updated.options == {"discount_percentage": 30}
 
 
-async def test_options_flow_discount_validation_range(recorder_mock, hass, enable_custom_integrations):
+async def test_options_flow_uses_legacy_data_discount(
+    recorder_mock, hass, enable_custom_integrations, mock_setup_entry
+):
+    """Options flow keeps a legacy data discount when options are empty."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "username": "test@test.com",
+            "password": "testpass",
+            "account_number": ACCOUNT,
+            CONF_DISCOUNT_PERCENTAGE: 20,
+        },
+        options={},
+        unique_id=ACCOUNT_HASH,
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    discount_field = next(key for key in result["data_schema"].schema if key == CONF_DISCOUNT_PERCENTAGE)
+    assert discount_field.default() == 20
+
+    result2 = await hass.config_entries.options.async_configure(result["flow_id"], {})
+    assert result2["type"] == FlowResultType.CREATE_ENTRY
+    assert result2["data"] == {CONF_DISCOUNT_PERCENTAGE: 20}
+
+    updated = hass.config_entries.async_get_entry(entry.entry_id)
+    assert updated is not None
+    assert updated.options == {CONF_DISCOUNT_PERCENTAGE: 20}
+    await async_wait_recording_done(hass)
+
+
+@pytest.mark.parametrize(
+    ("legacy_discount", "expected"),
+    [(20, 20), (None, 0)],
+)
+async def test_options_flow_falls_back_from_none_discount_values(
+    recorder_mock,
+    hass,
+    enable_custom_integrations,
+    mock_setup_entry,
+    *,
+    legacy_discount,
+    expected,
+):
+    """Options flow falls back when stored discount is None or unchanged."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "username": "test@test.com",
+            "password": "testpass",
+            "account_number": ACCOUNT,
+            CONF_DISCOUNT_PERCENTAGE: legacy_discount,
+        },
+        options={CONF_DISCOUNT_PERCENTAGE: None},
+        unique_id=ACCOUNT_HASH,
+    )
+    entry.add_to_hass(hass)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result2 = await hass.config_entries.options.async_configure(result["flow_id"], {})
+    assert result2["type"] == FlowResultType.CREATE_ENTRY
+    assert result2["data"] == {CONF_DISCOUNT_PERCENTAGE: expected}
+
+    updated = hass.config_entries.async_get_entry(entry.entry_id)
+    assert updated is not None
+    assert updated.options == {CONF_DISCOUNT_PERCENTAGE: expected}
+    await async_wait_recording_done(hass)
+
+
+async def test_options_flow_discount_validation_range(
+    recorder_mock, hass, enable_custom_integrations, mock_setup_entry
+):
     """Test discount percentage in options flow must be 0-100."""
     from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -993,7 +1076,7 @@ async def test_options_flow_discount_validation_range(recorder_mock, hass, enabl
     assert updated.options["discount_percentage"] == 100
 
 
-async def test_reconfigure_does_not_change_discount(recorder_mock, hass, enable_custom_integrations):
+async def test_reconfigure_does_not_change_discount(recorder_mock, hass, enable_custom_integrations, mock_setup_entry):
     """Test reconfigure no longer presents or updates discount_percentage."""
     from pytest_homeassistant_custom_component.common import MockConfigEntry
 

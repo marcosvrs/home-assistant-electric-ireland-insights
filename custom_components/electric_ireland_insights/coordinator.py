@@ -12,7 +12,9 @@ import aiohttp
 from homeassistant.components.recorder.models import StatisticData, StatisticMeanType, StatisticMetaData
 from homeassistant.components.recorder.statistics import (
     async_add_external_statistics,
+    clear_statistics,
     get_last_statistics,
+    get_metadata,
     statistics_during_period,
 )
 from homeassistant.config_entries import ConfigEntry
@@ -35,6 +37,7 @@ from .const import (
     INITIAL_LOOKBACK_DAYS,
     LOOKUP_DAYS,
     SCAN_INTERVAL,
+    _get_api_lock,
     _redact_id,
     hash_account_id,
 )
@@ -88,7 +91,61 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
         self._bill_periods: list[BillPeriod] = []
         self._bill_periods_fetched_at: datetime | None = None
         self._session = async_create_clientsession(hass, cookie_jar=aiohttp.CookieJar())
+        self._api_lock = _get_api_lock()
         self._closed = False
+
+    def _update_cached_meter_ids(self, discovered_ids: MeterIds) -> None:
+        """Persist meter identifiers discovered during authentication."""
+        new_data = {
+            **dict(self._config_entry.data),
+            "partner_id": discovered_ids["partner"],
+            "contract_id": discovered_ids["contract"],
+            "premise_id": discovered_ids["premise"],
+        }
+        self.hass.config_entries.async_update_entry(self._config_entry, data=new_data)
+        self._bill_periods = []
+        self._bill_periods_fetched_at = None
+        _LOGGER.debug(
+            "Updated cached meter IDs: partner=%s",
+            _redact_id(discovered_ids["partner"]),
+        )
+
+    def _get_discount_percentage(self) -> int:
+        """Return the configured discount, including legacy entry data."""
+        discount = self._config_entry.options.get(CONF_DISCOUNT_PERCENTAGE)
+        if discount is None:
+            discount = self._config_entry.data.get(CONF_DISCOUNT_PERCENTAGE, DEFAULT_DISCOUNT_PERCENTAGE)
+        return int(discount)
+
+    async def async_clear_discounted_statistics(self) -> None:
+        """Remove stale discounted statistics when no discount is configured."""
+        discount = self._get_discount_percentage()
+        if discount:
+            return
+
+        metadata = await get_instance(self.hass).async_add_executor_job(
+            partial(get_metadata, self.hass, statistic_source=DOMAIN)
+        )
+        statistic_prefixes = (
+            f"{DOMAIN}:{self._account_hash}_cost",
+            f"{DOMAIN}:{self._account}_cost",
+        )
+        statistic_ids = sorted(
+            statistic_id
+            for statistic_id in metadata
+            if any(statistic_id.startswith(prefix) for prefix in statistic_prefixes)
+            and statistic_id.endswith("_discounted")
+        )
+        if not statistic_ids:
+            return
+
+        await get_instance(self.hass).async_add_executor_job(
+            partial(clear_statistics, get_instance(self.hass), statistic_ids)
+        )
+        _LOGGER.info(
+            "Removed %d discounted statistics because the configured discount is 0",
+            len(statistic_ids),
+        )
 
     def _check_data_gap(self, result: CoordinatorData) -> None:
         latest_ts = result.get("latest_data_timestamp")
@@ -152,28 +209,18 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                 }
 
             try:
-                meter_ids, discovered_ids = await self._api.authenticate(session, cached_ids)
+                async with self._api_lock:
+                    meter_ids, discovered_ids = await self._api.authenticate(session, cached_ids)
             except CannotConnect:
                 if cached_ids is None:
                     raise
                 _LOGGER.warning("Cached meter IDs failed during login, falling back to full discovery")
                 session.cookie_jar.clear()
-                meter_ids, discovered_ids = await self._api.authenticate(session, None)
+                async with self._api_lock:
+                    meter_ids, discovered_ids = await self._api.authenticate(session, None)
 
             if discovered_ids is not None:
-                new_data = {
-                    **dict(self._config_entry.data),
-                    "partner_id": discovered_ids["partner"],
-                    "contract_id": discovered_ids["contract"],
-                    "premise_id": discovered_ids["premise"],
-                }
-                self.hass.config_entries.async_update_entry(self._config_entry, data=new_data)
-                self._bill_periods = []
-                self._bill_periods_fetched_at = None
-                _LOGGER.debug(
-                    "Updated cached meter IDs: partner=%s",
-                    _redact_id(discovered_ids["partner"]),
-                )
+                self._update_cached_meter_ids(discovered_ids)
 
             bill_period_stale = (
                 self._bill_periods_fetched_at is None
@@ -181,7 +228,8 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
             )
             if bill_period_stale:
                 try:
-                    self._bill_periods = await self._api.get_bill_periods(session, meter_ids)
+                    async with self._api_lock:
+                        self._bill_periods = await self._api.get_bill_periods(session, meter_ids)
                     self._bill_periods_fetched_at = utcnow()
                 except CannotConnect:
                     _LOGGER.warning("Failed to fetch bill periods, falling back to full lookback window")
@@ -217,11 +265,12 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
             failed_dates: list[date] = []
             for target_date in sorted(dates_to_fetch):  # SEQUENTIAL — never parallel
                 try:
-                    day_data = await self._api.get_hourly_usage(
-                        session,
-                        meter_ids,
-                        target_date,
-                    )
+                    async with self._api_lock:
+                        day_data = await self._api.get_hourly_usage(
+                            session,
+                            meter_ids,
+                            target_date,
+                        )
                     datapoints.extend(day_data)
                 except CannotConnect:
                     _LOGGER.warning(
@@ -234,28 +283,19 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                         "Cached meter IDs failed during data fetch, re-authenticating",
                     )
                     session.cookie_jar.clear()
-                    meter_ids, discovered_ids = await self._api.authenticate(
-                        session,
-                        None,
-                    )
-                    if discovered_ids is not None:
-                        new_data = {
-                            **dict(self._config_entry.data),
-                            "partner_id": discovered_ids["partner"],
-                            "contract_id": discovered_ids["contract"],
-                            "premise_id": discovered_ids["premise"],
-                        }
-                        self.hass.config_entries.async_update_entry(
-                            self._config_entry,
-                            data=new_data,
+                    async with self._api_lock:
+                        meter_ids, discovered_ids = await self._api.authenticate(
+                            session,
+                            None,
                         )
-                        self._bill_periods = []
-                        self._bill_periods_fetched_at = None
-                    day_data = await self._api.get_hourly_usage(
-                        session,
-                        meter_ids,
-                        target_date,
-                    )
+                    if discovered_ids is not None:
+                        self._update_cached_meter_ids(discovered_ids)
+                    async with self._api_lock:
+                        day_data = await self._api.get_hourly_usage(
+                            session,
+                            meter_ids,
+                            target_date,
+                        )
                     datapoints.extend(day_data)
 
             if failed_dates and not datapoints:
@@ -302,7 +342,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                 f"{DOMAIN}:{self._account_hash}_cost",
                 "EUR",
             )
-            discount = self._config_entry.options.get(CONF_DISCOUNT_PERCENTAGE, DEFAULT_DISCOUNT_PERCENTAGE)
+            discount = self._get_discount_percentage()
             if discount:
                 await self._insert_statistics(
                     datapoints,
@@ -387,6 +427,9 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
         await _close_session(self._session)
 
     async def async_tariff_backfill(self, *, full_history: bool = False) -> None:
+        await self._async_tariff_backfill(full_history=full_history)
+
+    async def _async_tariff_backfill(self, *, full_history: bool = False) -> None:
         """Background backfill of historical data.
 
         When full_history is True, uses all available bill periods (6-13 months).
@@ -399,7 +442,8 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
         session = async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar())
         try:
             try:
-                meter_ids, _ = await self._api.authenticate(session, None)
+                async with self._api_lock:
+                    meter_ids, discovered_ids = await self._api.authenticate(session, None)
             except InvalidAuth:
                 _LOGGER.warning("Background backfill failed due to invalid auth")
                 async_create_issue(
@@ -425,9 +469,13 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                 )
                 return
 
+            if discovered_ids is not None:
+                self._update_cached_meter_ids(discovered_ids)
+
             if full_history:
                 try:
-                    bill_periods = await self._api.get_bill_periods(session, meter_ids)
+                    async with self._api_lock:
+                        bill_periods = await self._api.get_bill_periods(session, meter_ids)
                 except CannotConnect:
                     _LOGGER.warning("Full history backfill: cannot fetch bill periods, will retry")
                     async_create_issue(
@@ -445,7 +493,8 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                     return
             else:
                 try:
-                    bill_periods = await self._api.get_bill_periods(session, meter_ids)
+                    async with self._api_lock:
+                        bill_periods = await self._api.get_bill_periods(session, meter_ids)
                 except CannotConnect:
                     bill_periods = []
 
@@ -489,7 +538,8 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
             failed_dates: list[date] = []
             for target_date in dates:
                 try:
-                    day_data = await self._api.get_hourly_usage(session, meter_ids, target_date)
+                    async with self._api_lock:
+                        day_data = await self._api.get_hourly_usage(session, meter_ids, target_date)
                     datapoints.extend(day_data)
                 except CannotConnect:
                     _LOGGER.warning(
@@ -501,7 +551,8 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                     _LOGGER.debug("Backfill: CachedIdsInvalid on %s, re-authenticating", target_date)
                     session.cookie_jar.clear()
                     try:
-                        meter_ids, _ = await self._api.authenticate(session, None)
+                        async with self._api_lock:
+                            meter_ids, discovered_ids = await self._api.authenticate(session, None)
                     except (InvalidAuth, CannotConnect):
                         _LOGGER.warning(
                             "Backfill: re-authentication failed on %s, aborting backfill",
@@ -517,7 +568,10 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                             translation_placeholders={"account": self._account_hash},
                         )
                         return
-                    day_data = await self._api.get_hourly_usage(session, meter_ids, target_date)
+                    if discovered_ids is not None:
+                        self._update_cached_meter_ids(discovered_ids)
+                    async with self._api_lock:
+                        day_data = await self._api.get_hourly_usage(session, meter_ids, target_date)
                     datapoints.extend(day_data)
 
             if datapoints:
@@ -533,7 +587,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                     f"{DOMAIN}:{self._account_hash}_cost",
                     "EUR",
                 )
-                discount = self._config_entry.options.get(CONF_DISCOUNT_PERCENTAGE, DEFAULT_DISCOUNT_PERCENTAGE)
+                discount = self._get_discount_percentage()
                 if discount:
                     await self._insert_statistics(
                         datapoints,
@@ -627,6 +681,33 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                     discount=discount,
                 )
 
+    async def _async_get_base_sum(self, statistic_id: str, overlap_start: datetime) -> float:
+        """Return the cumulative sum immediately before the incoming window."""
+        statistic_types: set[Literal["change", "last_reset", "max", "mean", "min", "state", "sum"]] = {"sum"}
+        search_starts = (
+            overlap_start - timedelta(days=LOOKUP_DAYS + 1),
+            datetime(1970, 1, 1, tzinfo=UTC),
+        )
+        for index, start_time in enumerate(search_starts):
+            existing_before = await get_instance(self.hass).async_add_executor_job(
+                partial(
+                    statistics_during_period,
+                    self.hass,
+                    start_time,
+                    overlap_start,
+                    {statistic_id},
+                    "hour",
+                    None,
+                    statistic_types,
+                )
+            )
+            rows = (existing_before or {}).get(statistic_id, [])
+            if rows:
+                return rows[-1].get("sum") or 0.0
+            if index == len(search_starts) - 1:
+                return 0.0
+        return 0.0
+
     async def _insert_statistics(
         self,
         datapoints: list[ElectricIrelandDatapoint],
@@ -654,24 +735,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
         filtered.sort(key=lambda x: x[0])
         overlap_start = filtered[0][0]
 
-        stat_types: set[Literal["change", "last_reset", "max", "mean", "min", "state", "sum"]] = {"sum"}
-        existing_before = await get_instance(self.hass).async_add_executor_job(
-            partial(
-                statistics_during_period,
-                self.hass,
-                datetime(1970, 1, 1, tzinfo=UTC),
-                overlap_start,
-                {statistic_id},
-                "hour",
-                None,
-                stat_types,
-            )
-        )
-
-        base_sum = 0.0
-        rows = (existing_before or {}).get(statistic_id, [])
-        if rows:
-            base_sum = rows[-1].get("sum") or 0.0
+        base_sum = await self._async_get_base_sum(statistic_id, overlap_start)
 
         statistics: list[StatisticData] = []
         current_sum = base_sum

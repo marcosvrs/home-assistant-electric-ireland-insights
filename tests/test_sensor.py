@@ -101,6 +101,7 @@ async def test_unique_id_format(hass, enable_custom_integrations, mock_config_en
     last_import_desc = next(d for d in DIAGNOSTIC_SENSORS if d.key == "last_import_time")
     sensor = ElectricIrelandDiagnosticSensor(mock_coordinator, last_import_desc, ACCOUNT, ACCOUNT_HASH)
     assert sensor.unique_id == f"electric_ireland_insights_{ACCOUNT_HASH}_last_import_time"
+    assert sensor.entity_id == f"sensor.electric_ireland_insights_{ACCOUNT_HASH}_last_import_time"
 
 
 async def test_device_classes(hass, enable_custom_integrations, mock_config_entry):
