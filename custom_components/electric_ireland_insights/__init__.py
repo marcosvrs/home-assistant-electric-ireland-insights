@@ -8,6 +8,10 @@ import homeassistant.helpers.config_validation as cv
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import (
+    DeviceEntry,
+    DeviceRegistry,
+)
 from homeassistant.helpers.device_registry import async_get as async_get_device_registry
 from homeassistant.helpers.entity_registry import (
     EntityRegistry,
@@ -48,6 +52,21 @@ def _migrate_legacy_discount_to_options(hass: HomeAssistant, entry: ElectricIrel
     _LOGGER.info("Migrated legacy discount percentage into config entry options")
 
 
+def _merge_device_registry_customizations(
+    registry: DeviceRegistry,
+    target: DeviceEntry,
+    source: DeviceEntry,
+) -> None:
+    """Preserve user device customizations while removing a duplicate."""
+    registry.async_update_device(
+        target.id,
+        area_id=target.area_id if target.area_id is not None else source.area_id,
+        disabled_by=target.disabled_by if target.disabled_by is not None else source.disabled_by,
+        labels=target.labels | source.labels,
+        name_by_user=target.name_by_user if target.name_by_user is not None else source.name_by_user,
+    )
+
+
 def _migrate_legacy_device(hass: HomeAssistant, entry: ElectricIrelandConfigEntry) -> None:
     """Migrate a raw-account device to privacy-safe identifiers."""
     device_registry = async_get_device_registry(hass)
@@ -57,34 +76,49 @@ def _migrate_legacy_device(hass: HomeAssistant, entry: ElectricIrelandConfigEntr
     legacy_device = device_registry.async_get_device(identifiers={account_identifier})
     if legacy_device is None:
         return
+    if entry.entry_id not in legacy_device.config_entries:
+        _LOGGER.warning("Could not migrate legacy device: device belongs to another entry")
+        return
 
     hashed_device = device_registry.async_get_device(identifiers={hashed_identifier})
     if hashed_device is not None and hashed_device.id != legacy_device.id:
         if legacy_device.config_entries == {entry.entry_id} and hashed_device.config_entries == {entry.entry_id}:
             entity_registry = async_get_entity_registry(hass)
             for entity in tuple(entity_registry.entities.values()):
-                if entity.device_id == legacy_device.id:
-                    entity_registry.async_update_entity(entity.entity_id, device_id=hashed_device.id)
+                if entity.device_id == hashed_device.id:
+                    entity_registry.async_update_entity(entity.entity_id, device_id=legacy_device.id)
+            _merge_device_registry_customizations(device_registry, legacy_device, hashed_device)
+            device_registry.async_remove_device(hashed_device.id)
+            device_registry.deleted_devices.pop(hashed_device.id, None)
+            merged_identifiers = (legacy_device.identifiers | hashed_device.identifiers) - {account_identifier}
+            merged_identifiers.add(hashed_identifier)
+            merged_connections = legacy_device.connections | hashed_device.connections
+            merged_name = legacy_device.name or hashed_device.name
+            merged_serial_number = legacy_device.serial_number or hashed_device.serial_number
             device_registry.async_update_device(
-                hashed_device.id,
-                area_id=legacy_device.area_id if legacy_device.area_id is not None else hashed_device.area_id,
-                disabled_by=legacy_device.disabled_by
-                if legacy_device.disabled_by is not None
-                else hashed_device.disabled_by,
-                labels=legacy_device.labels | hashed_device.labels,
-                name_by_user=legacy_device.name_by_user
-                if legacy_device.name_by_user is not None
-                else hashed_device.name_by_user,
+                legacy_device.id,
+                new_identifiers=merged_identifiers,
+                new_connections=merged_connections,
+                name=merged_name.replace(account, hashed_identifier[1]) if merged_name is not None else None,
+                serial_number=merged_serial_number.replace(account, hashed_identifier[1])
+                if merged_serial_number is not None
+                else None,
             )
-            device_registry.async_remove_device(legacy_device.id)
-            device_registry.deleted_devices.pop(legacy_device.id, None)
             _LOGGER.info("Merged duplicate legacy device into privacy-safe device")
         else:
             _LOGGER.warning("Could not migrate legacy device: privacy-safe identifier is already in use")
         return
 
+    if legacy_device.config_entries != {entry.entry_id}:
+        _LOGGER.warning("Could not migrate legacy device: device is shared with another entry")
+        return
+
     new_name = legacy_device.name.replace(account, hashed_identifier[1]) if legacy_device.name else None
-    new_serial_number = hashed_identifier[1] if legacy_device.serial_number == account else legacy_device.serial_number
+    new_serial_number = (
+        legacy_device.serial_number.replace(account, hashed_identifier[1])
+        if legacy_device.serial_number is not None
+        else None
+    )
     device_registry.async_update_device(
         legacy_device.id,
         new_identifiers=(legacy_device.identifiers - {account_identifier}) | {hashed_identifier},

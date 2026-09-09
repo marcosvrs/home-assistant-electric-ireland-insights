@@ -4,6 +4,7 @@ import logging
 from unittest.mock import AsyncMock, patch
 
 from homeassistant.config_entries import ConfigEntryState
+from homeassistant.helpers.device_registry import DeviceEntryDisabler
 from homeassistant.helpers.device_registry import async_get as async_get_device_registry
 from homeassistant.helpers.entity_registry import (
     RegistryEntryDisabler,
@@ -391,31 +392,58 @@ async def test_duplicate_legacy_device_is_merged(hass, mock_config_entry):
         identifiers={(DOMAIN, account)},
         name=f"Electric Ireland Insights ({account})",
     )
-    device_registry.async_update_device(legacy.id, name_by_user="Main meter")
+    device_registry.async_update_device(
+        legacy.id,
+        area_id="legacy-area",
+        disabled_by=DeviceEntryDisabler.USER,
+        labels={"legacy"},
+        name_by_user="Main meter",
+        serial_number=account,
+    )
     hashed = device_registry.async_get_or_create(
         config_entry_id=mock_config_entry.entry_id,
         identifiers={(DOMAIN, ACCOUNT_HASH)},
         name=f"Electric Ireland Insights ({ACCOUNT_HASH})",
     )
-    entity = entity_registry.async_get_or_create(
+    device_registry.async_update_device(
+        hashed.id,
+        area_id="hashed-area",
+        labels={"hashed"},
+        name_by_user="Hashed meter",
+    )
+    legacy_entity = entity_registry.async_get_or_create(
         "sensor",
         DOMAIN,
         "legacy-device-entity",
         config_entry=mock_config_entry,
         suggested_object_id="legacy_device_entity",
     )
-    entity_registry.async_update_entity(entity.entity_id, device_id=legacy.id)
+    hashed_entity = entity_registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        "hashed-device-entity",
+        config_entry=mock_config_entry,
+        suggested_object_id="hashed_device_entity",
+    )
+    entity_registry.async_update_entity(legacy_entity.entity_id, device_id=legacy.id)
+    entity_registry.async_update_entity(hashed_entity.entity_id, device_id=hashed.id)
 
     _migrate_legacy_device(hass, mock_config_entry)
 
     migrated = device_registry.async_get_device(identifiers={(DOMAIN, ACCOUNT_HASH)})
     assert migrated is not None
-    assert migrated.id == hashed.id
+    assert migrated.id == legacy.id
+    assert migrated.identifiers == {(DOMAIN, ACCOUNT_HASH)}
+    assert migrated.area_id == "legacy-area"
+    assert migrated.disabled_by is DeviceEntryDisabler.USER
+    assert migrated.labels == {"hashed", "legacy"}
     assert migrated.name_by_user == "Main meter"
-    moved_entity = entity_registry.async_get(entity.entity_id)
-    assert moved_entity is not None
-    assert moved_entity.device_id == hashed.id
+    assert migrated.name == f"Electric Ireland Insights ({ACCOUNT_HASH})"
+    assert migrated.serial_number == ACCOUNT_HASH
+    assert entity_registry.async_get(legacy_entity.entity_id).device_id == legacy.id
+    assert entity_registry.async_get(hashed_entity.entity_id).device_id == legacy.id
     assert device_registry.async_get_device(identifiers={(DOMAIN, account)}) is None
+    assert device_registry.deleted_devices.get(hashed.id) is None
     assert device_registry.deleted_devices.get(legacy.id) is None
 
 
@@ -452,6 +480,39 @@ async def test_legacy_device_migration_leaves_cross_entry_collision(hass, mock_c
 
     assert registry.async_get_device(identifiers={(DOMAIN, account)}) is legacy
     assert registry.async_get_device(identifiers={(DOMAIN, ACCOUNT_HASH)}) is hashed
+
+
+async def test_legacy_device_migration_skips_device_owned_by_another_entry(hass, mock_config_entry):
+    """A raw device owned by another entry is not rewritten."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    mock_config_entry.add_to_hass(hass)
+    other_entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "username": "other@test.com",
+            "password": "testpass",
+            "account_number": "100000002",
+        },
+        unique_id="other-account",
+    )
+    other_entry.add_to_hass(hass)
+
+    registry = async_get_device_registry(hass)
+    account = mock_config_entry.data["account_number"]
+    legacy_name = f"Electric Ireland Insights ({account})"
+    legacy = registry.async_get_or_create(
+        config_entry_id=other_entry.entry_id,
+        identifiers={(DOMAIN, account)},
+        name=legacy_name,
+    )
+
+    _migrate_legacy_device(hass, mock_config_entry)
+
+    assert registry.async_get_device(identifiers={(DOMAIN, account)}) is legacy
+    assert legacy.identifiers == {(DOMAIN, account)}
+    assert legacy.name == legacy_name
+    assert registry.async_get_device(identifiers={(DOMAIN, ACCOUNT_HASH)}) is None
 
 
 async def test_legacy_diagnostic_entity_ids_are_migrated(hass, mock_config_entry):
