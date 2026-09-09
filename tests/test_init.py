@@ -515,6 +515,43 @@ async def test_legacy_device_migration_skips_device_owned_by_another_entry(hass,
     assert registry.async_get_device(identifiers={(DOMAIN, ACCOUNT_HASH)}) is None
 
 
+async def test_legacy_device_migration_skips_shared_device(hass, mock_config_entry):
+    """A device shared with another entry is not rewritten."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    mock_config_entry.add_to_hass(hass)
+    other_entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "username": "other@test.com",
+            "password": "testpass",
+            "account_number": "100000002",
+        },
+        unique_id="other-account",
+    )
+    other_entry.add_to_hass(hass)
+
+    registry = async_get_device_registry(hass)
+    account = mock_config_entry.data["account_number"]
+    legacy_name = f"Electric Ireland Insights ({account})"
+    legacy = registry.async_get_or_create(
+        config_entry_id=mock_config_entry.entry_id,
+        identifiers={(DOMAIN, account)},
+        name=legacy_name,
+    )
+    registry.async_update_device(legacy.id, add_config_entry_id=other_entry.entry_id)
+
+    _migrate_legacy_device(hass, mock_config_entry)
+
+    shared = registry.async_get_device(identifiers={(DOMAIN, account)})
+    assert shared is not None
+    assert shared.id == legacy.id
+    assert shared.config_entries == {mock_config_entry.entry_id, other_entry.entry_id}
+    assert shared.identifiers == {(DOMAIN, account)}
+    assert shared.name == legacy_name
+    assert registry.async_get_device(identifiers={(DOMAIN, ACCOUNT_HASH)}) is None
+
+
 async def test_legacy_diagnostic_entity_ids_are_migrated(hass, mock_config_entry):
     """Legacy diagnostic IDs are renamed without retaining raw account IDs."""
     mock_config_entry.add_to_hass(hass)
