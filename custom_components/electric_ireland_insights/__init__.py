@@ -19,7 +19,7 @@ from homeassistant.helpers.entity_registry import (
 )
 from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
 
-from .const import CONF_DISCOUNT_PERCENTAGE, DOMAIN, NAME, _redact_id, hash_account_id
+from .const import CONF_DISCOUNT_PERCENTAGE, DOMAIN, _redact_id, hash_account_id
 from .coordinator import ElectricIrelandCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -56,14 +56,25 @@ def _migrate_legacy_config_entry_identity(hass: HomeAssistant, entry: ElectricIr
     """Migrate raw config-entry identity to privacy-safe values."""
     account = entry.data["account_number"]
     account_hash = hash_account_id(account)
-    legacy_title = f"{NAME} ({account})"
-    if entry.unique_id != account and entry.title != legacy_title:
+    new_title = entry.title.replace(account, account_hash)
+    new_unique_id = entry.unique_id
+
+    if entry.unique_id == account:
+        if any(
+            config_entry.entry_id != entry.entry_id and config_entry.unique_id == account_hash
+            for config_entry in hass.config_entries.async_entries(DOMAIN)
+        ):
+            _LOGGER.warning("Could not migrate legacy config entry identity: privacy-safe ID is already in use")
+        else:
+            new_unique_id = account_hash
+
+    if new_title == entry.title and new_unique_id == entry.unique_id:
         return
 
     hass.config_entries.async_update_entry(
         entry,
-        title=f"{NAME} ({account_hash})" if entry.title == legacy_title else entry.title,
-        unique_id=account_hash if entry.unique_id == account else entry.unique_id,
+        title=new_title,
+        unique_id=new_unique_id,
     )
     _LOGGER.info("Migrated legacy config entry identity")
 

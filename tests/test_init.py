@@ -101,14 +101,55 @@ async def test_legacy_config_entry_identity_is_migrated(hass, mock_config_entry)
     account = mock_config_entry.data["account_number"]
     hass.config_entries.async_update_entry(
         mock_config_entry,
-        title=f"{NAME} ({account})",
+        title=f"{NAME} ({account}) - Main meter",
         unique_id=account,
     )
 
     _migrate_legacy_config_entry_identity(hass, mock_config_entry)
 
     assert mock_config_entry.unique_id == ACCOUNT_HASH
-    assert mock_config_entry.title == f"{NAME} ({ACCOUNT_HASH})"
+    assert mock_config_entry.title == f"{NAME} ({ACCOUNT_HASH}) - Main meter"
+
+
+async def test_hashed_config_entry_title_is_migrated(hass, mock_config_entry):
+    """A raw account title is migrated when the ID is already hashed."""
+    mock_config_entry.add_to_hass(hass)
+    account = mock_config_entry.data["account_number"]
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        title=f"{NAME} ({account}) - Main meter",
+        unique_id=ACCOUNT_HASH,
+    )
+
+    _migrate_legacy_config_entry_identity(hass, mock_config_entry)
+
+    assert mock_config_entry.unique_id == ACCOUNT_HASH
+    assert mock_config_entry.title == f"{NAME} ({ACCOUNT_HASH}) - Main meter"
+
+
+async def test_legacy_config_entry_identity_collision_is_preserved(hass, mock_config_entry):
+    """A legacy ID is retained when another entry already owns its hash."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    mock_config_entry.add_to_hass(hass)
+    account = mock_config_entry.data["account_number"]
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        title=f"{NAME} ({account}) - Main meter",
+        unique_id=account,
+    )
+    hashed_entry = MockConfigEntry(
+        domain=DOMAIN,
+        data=mock_config_entry.data,
+        unique_id=ACCOUNT_HASH,
+    )
+    hashed_entry.add_to_hass(hass)
+
+    _migrate_legacy_config_entry_identity(hass, mock_config_entry)
+
+    assert mock_config_entry.unique_id == account
+    assert mock_config_entry.title == f"{NAME} ({ACCOUNT_HASH}) - Main meter"
+    assert hashed_entry.unique_id == ACCOUNT_HASH
 
 
 async def test_setup_entry_with_full_history_import(recorder_mock, hass, enable_custom_integrations, caplog):
