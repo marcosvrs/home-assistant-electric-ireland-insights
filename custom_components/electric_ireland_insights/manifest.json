@@ -1,10 +1,10 @@
 {
   "domain": "electric_ireland_insights",
   "name": "Electric Ireland Insights (Unofficial)",
+  "after_dependencies": ["energy"],
   "codeowners": ["@marcosvrs"],
   "config_flow": true,
   "dependencies": ["recorder"],
-  "after_dependencies": ["energy"],
   "documentation": "https://github.com/marcosvrs/home-assistant-electric-ireland-insights",
   "integration_type": "service",
   "iot_class": "cloud_polling",
