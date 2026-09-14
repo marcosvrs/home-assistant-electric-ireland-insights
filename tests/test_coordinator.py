@@ -1066,6 +1066,9 @@ async def test_legacy_data_discount_prevents_statistics_cleanup(recorder_mock, h
     )
 
     with (
+        patch(
+            "custom_components.electric_ireland_insights.coordinator.get_metadata",
+        ) as mock_get_metadata,
         patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI"),
         patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
     ):
@@ -1073,6 +1076,7 @@ async def test_legacy_data_discount_prevents_statistics_cleanup(recorder_mock, h
 
         coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
         await coordinator.async_clear_discounted_statistics()
+    mock_get_metadata.assert_not_called()
 
 
 async def test_cost_discounted_statistic_full_discount(recorder_mock, hass, mock_config_entry):

@@ -65,6 +65,33 @@ def _migrate_legacy_discount_to_options(hass: HomeAssistant, entry: ElectricIrel
     _LOGGER.info("Migrated legacy discount percentage into config entry options")
 
 
+def _preserve_duplicate_config_entry_state(
+    hass: HomeAssistant,
+    entry: ElectricIrelandConfigEntry,
+    duplicate_entry: ConfigEntry,
+) -> None:
+    """Preserve duplicate config-entry state before removing it."""
+    merged_options = {**entry.options, **duplicate_entry.options}
+    if merged_options != entry.options:
+        hass.config_entries.async_update_entry(entry, options=merged_options)
+
+    device_registry = async_get_device_registry(hass)
+    for device in tuple(device_registry.devices.values()):
+        if duplicate_entry.entry_id in device.config_entries:
+            device_registry.async_update_device(
+                device.id,
+                add_config_entry_id=entry.entry_id,
+            )
+
+    entity_registry = async_get_entity_registry(hass)
+    for entity in tuple(entity_registry.entities.values()):
+        if entity.config_entry_id == duplicate_entry.entry_id:
+            entity_registry.async_update_entity(
+                entity.entity_id,
+                config_entry_id=entry.entry_id,
+            )
+
+
 async def _migrate_legacy_config_entry_identity(
     hass: HomeAssistant,
     entry: ElectricIrelandConfigEntry,
@@ -87,6 +114,7 @@ async def _migrate_legacy_config_entry_identity(
         if duplicate_entry is None:
             new_unique_id = account_hash
         elif duplicate_entry.data.get("account_number") == account:
+            _preserve_duplicate_config_entry_state(hass, entry, duplicate_entry)
             removal = await hass.config_entries.async_remove(duplicate_entry.entry_id)
             if removal["require_restart"]:
                 _LOGGER.warning("Removed duplicate Electric Ireland config entry; restart required")
