@@ -12,6 +12,8 @@ from homeassistant.helpers.entity_registry import (
     RegistryEntryHider,
 )
 from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
+from homeassistant.helpers.issue_registry import IssueSeverity, async_create_issue
+from homeassistant.helpers.issue_registry import async_get as async_get_issue_registry
 from pytest_homeassistant_custom_component.components.recorder.common import async_wait_recording_done
 
 from custom_components.electric_ireland_insights import (
@@ -19,6 +21,7 @@ from custom_components.electric_ireland_insights import (
     _migrate_legacy_device,
     _migrate_legacy_discount_to_options,
     _migrate_legacy_entity_ids,
+    _migrate_legacy_repair_issues,
     async_migrate_entry,
 )
 from custom_components.electric_ireland_insights.const import CONF_DISCOUNT_PERCENTAGE, DOMAIN, NAME, hash_account_id
@@ -30,6 +33,15 @@ ACCOUNT_HASH = hash_account_id("100000001")
 async def test_setup_entry_success(recorder_mock, hass, enable_custom_integrations, mock_config_entry, caplog):
     caplog.set_level(logging.DEBUG, logger="custom_components.electric_ireland_insights")
     mock_config_entry.add_to_hass(hass)
+    async_create_issue(
+        hass,
+        DOMAIN,
+        f"data_gap_{mock_config_entry.data['account_number']}",
+        is_fixable=False,
+        severity=IssueSeverity.WARNING,
+        translation_key="data_gap",
+        translation_placeholders={"account": mock_config_entry.data["account_number"], "days": "7.0"},
+    )
     with (
         patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI") as mock_api_class,
         patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
@@ -47,9 +59,37 @@ async def test_setup_entry_success(recorder_mock, hass, enable_custom_integratio
         await hass.config_entries.async_setup(mock_config_entry.entry_id)
         await hass.async_block_till_done()
 
+        issue_registry = async_get_issue_registry(hass)
+        assert (
+            issue_registry.async_get_issue(
+                DOMAIN,
+                f"data_gap_{mock_config_entry.data['account_number']}",
+            )
+            is None
+        )
         assert "Setting up Electric Ireland entry" in caplog.text
         assert "Platforms forwarded" in caplog.text
         assert mock_config_entry.state == ConfigEntryState.LOADED
+
+
+async def test_legacy_repair_issue_is_removed(hass, mock_config_entry):
+    """Legacy raw-account repair issues are removed before refresh."""
+    mock_config_entry.add_to_hass(hass)
+    legacy_issue_id = f"data_gap_{mock_config_entry.data['account_number']}"
+    async_create_issue(
+        hass,
+        DOMAIN,
+        legacy_issue_id,
+        is_fixable=False,
+        severity=IssueSeverity.WARNING,
+        translation_key="data_gap",
+        translation_placeholders={"account": mock_config_entry.data["account_number"], "days": "7.0"},
+    )
+
+    _migrate_legacy_repair_issues(hass, mock_config_entry)
+
+    issue_registry = async_get_issue_registry(hass)
+    assert issue_registry.async_get_issue(DOMAIN, legacy_issue_id) is None
 
 
 async def test_setup_entry_migrates_legacy_discount_to_options(
@@ -155,7 +195,7 @@ async def test_legacy_config_entry_identity_duplicate_is_removed(hass, mock_conf
 
 
 async def test_legacy_config_entry_identity_preserves_duplicate_state(hass, mock_config_entry):
-    """Duplicate options and registry records survive identity migration."""
+    """Duplicate data, options, and registry records survive identity migration."""
     from pytest_homeassistant_custom_component.common import MockConfigEntry
 
     mock_config_entry.add_to_hass(hass)
@@ -168,7 +208,7 @@ async def test_legacy_config_entry_identity_preserves_duplicate_state(hass, mock
     )
     hashed_entry = MockConfigEntry(
         domain=DOMAIN,
-        data=mock_config_entry.data,
+        data={**mock_config_entry.data, "password": "new-password", "partner_id": "new-partner"},
         options={CONF_DISCOUNT_PERCENTAGE: 0},
         unique_id=ACCOUNT_HASH,
     )
@@ -201,8 +241,9 @@ async def test_legacy_config_entry_identity_preserves_duplicate_state(hass, mock
     )
 
     await _migrate_legacy_config_entry_identity(hass, mock_config_entry)
-
     assert mock_config_entry.options == {CONF_DISCOUNT_PERCENTAGE: 0}
+    assert mock_config_entry.data["password"] == "new-password"
+    assert mock_config_entry.data["partner_id"] == "new-partner"
     assert hass.config_entries.async_get_entry(hashed_entry.entry_id) is None
     retained_device = device_registry.async_get_device(identifiers={(DOMAIN, ACCOUNT_HASH)})
     assert retained_device is not None
@@ -234,7 +275,7 @@ async def test_legacy_config_entry_identity_removal_failure_keeps_raw_id(
     )
     hashed_entry = MockConfigEntry(
         domain=DOMAIN,
-        data=mock_config_entry.data,
+        data={**mock_config_entry.data, "password": "hashed-password"},
         options={CONF_DISCOUNT_PERCENTAGE: 0},
         unique_id=ACCOUNT_HASH,
     )
@@ -278,7 +319,9 @@ async def test_legacy_config_entry_identity_removal_failure_keeps_raw_id(
     assert mock_config_entry.unique_id == account
     assert mock_config_entry.title == f"{NAME} ({ACCOUNT_HASH}) - Main meter"
     assert mock_config_entry.options == {CONF_DISCOUNT_PERCENTAGE: 20}
+    assert mock_config_entry.data["password"] == "testpass"
     assert hass.config_entries.async_get_entry(hashed_entry.entry_id) is hashed_entry
+    assert hashed_entry.data["password"] == "hashed-password"
     retained_device = device_registry.async_get_device(identifiers={(DOMAIN, ACCOUNT_HASH)})
     assert retained_device is not None
     assert retained_device.config_entries == {hashed_entry.entry_id}

@@ -5,14 +5,17 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from functools import partial
-from typing import Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 import aiohttp
+from homeassistant.components.energy.data import async_get_manager
 from homeassistant.components.recorder.core import Recorder
+from homeassistant.components.recorder.db_schema import Statistics
 from homeassistant.components.recorder.models import StatisticData, StatisticMeanType, StatisticMetaData
 from homeassistant.components.recorder.statistics import (
     async_add_external_statistics,
@@ -31,6 +34,9 @@ from homeassistant.helpers.recorder import get_instance, session_scope
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util.dt import now as dt_now
 from homeassistant.util.dt import utcnow
+
+if TYPE_CHECKING:
+    from homeassistant.components.energy.data import EnergyPreferences
 
 from .api import ElectricIrelandAPI
 from .const import (
@@ -61,6 +67,17 @@ async def _close_session(session: aiohttp.ClientSession) -> None:
     close_result = session.close()
     if inspect.isawaitable(close_result):
         await close_result
+
+
+def _replace_statistic_references(value: object, replacements: Mapping[str, str]) -> object:
+    """Replace statistic IDs in a nested Energy Dashboard preference."""
+    if isinstance(value, str):
+        return replacements.get(value, value)
+    if isinstance(value, list):
+        return [_replace_statistic_references(item, replacements) for item in value]
+    if isinstance(value, dict):
+        return {key: _replace_statistic_references(item, replacements) for key, item in value.items()}
+    return value
 
 
 @dataclass(slots=True)
@@ -136,7 +153,10 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
         """Return the configured discount, including legacy entry data."""
         discount = self._config_entry.options.get(CONF_DISCOUNT_PERCENTAGE)
         if discount is None:
-            discount = self._config_entry.data.get(CONF_DISCOUNT_PERCENTAGE, DEFAULT_DISCOUNT_PERCENTAGE)
+            discount = self._config_entry.data.get(
+                CONF_DISCOUNT_PERCENTAGE,
+                DEFAULT_DISCOUNT_PERCENTAGE,
+            )
         return int(discount)
 
     async def async_migrate_legacy_statistics(self) -> None:
@@ -144,6 +164,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
         recorder = get_instance(self.hass)
         metadata = await recorder.async_add_executor_job(partial(get_metadata, self.hass, statistic_source=DOMAIN))
         legacy_prefix = f"{DOMAIN}:{self._account}_"
+        statistic_replacements: dict[str, str] = {}
         for old_statistic_id in sorted(metadata):
             if not old_statistic_id.startswith(legacy_prefix):
                 continue
@@ -152,10 +173,15 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
             if new_statistic_id in metadata:
                 _LOGGER.warning(
                     "Could not migrate legacy statistic identity for account=%s: "
-                    "retaining hashed data and removing raw data",
+                    "merged legacy history into hashed data",
                     _redact_id(self._account),
                 )
-                await self._async_clear_statistics(recorder, [old_statistic_id])
+                await self._async_merge_legacy_statistic(
+                    recorder,
+                    old_statistic_id=old_statistic_id,
+                    new_statistic_id=new_statistic_id,
+                )
+                statistic_replacements[old_statistic_id] = new_statistic_id
                 metadata.pop(old_statistic_id)
                 continue
 
@@ -174,7 +200,89 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                 old_metadata=old_metadata,
                 new_metadata=new_metadata,
             )
+            statistic_replacements[old_statistic_id] = new_statistic_id
             metadata[new_statistic_id] = metadata.pop(old_statistic_id)
+
+        if statistic_replacements:
+            await self._async_migrate_energy_preferences(statistic_replacements)
+
+    async def _async_merge_legacy_statistic(
+        self,
+        recorder: Recorder,
+        *,
+        old_statistic_id: str,
+        new_statistic_id: str,
+    ) -> None:
+        """Merge legacy rows into an existing privacy-safe statistic."""
+
+        def _merge(instance: Recorder) -> None:
+            with session_scope(session=instance.get_session()) as session:
+                old_metadata = instance.statistics_meta_manager.get(session, old_statistic_id)
+                new_metadata = instance.statistics_meta_manager.get(session, new_statistic_id)
+                if old_metadata is None or new_metadata is None:
+                    return
+
+                old_metadata_id = old_metadata[0]
+                new_metadata_id = new_metadata[0]
+                old_rows = (
+                    session.query(Statistics)
+                    .filter(Statistics.metadata_id == old_metadata_id)
+                    .order_by(Statistics.start_ts)
+                    .all()
+                )
+                new_rows = (
+                    session.query(Statistics)
+                    .filter(Statistics.metadata_id == new_metadata_id)
+                    .order_by(Statistics.start_ts)
+                    .all()
+                )
+                new_start_ts = {row.start_ts for row in new_rows}
+                old_only_rows = [row for row in old_rows if row.start_ts not in new_start_ts]
+
+                if old_only_rows:
+                    merged_rows = [(row, True) for row in old_only_rows] + [(row, False) for row in new_rows]
+                    merged_rows.sort(key=lambda item: item[0].start_ts or 0)
+                    running_sum = merged_rows[0][0].sum or 0.0
+                    last_original_sum: dict[bool, float | None] = {
+                        True: None,
+                        False: None,
+                    }
+                    for index, (row, is_old) in enumerate(merged_rows):
+                        original_sum = row.sum
+                        if index:
+                            if row.state is not None:
+                                running_sum += row.state
+                            else:
+                                previous_original_sum = last_original_sum[is_old]
+                                if original_sum is not None and previous_original_sum is not None:
+                                    running_sum += original_sum - previous_original_sum
+                        row.sum = running_sum
+                        last_original_sum[is_old] = original_sum
+
+                    for row in old_only_rows:
+                        row.metadata_id = new_metadata_id
+                    session.flush()
+
+                instance.statistics_meta_manager.delete(session, [old_statistic_id])
+
+        await self._async_run_recorder_task(recorder, _merge)
+
+    async def _async_migrate_energy_preferences(
+        self,
+        replacements: Mapping[str, str],
+    ) -> None:
+        """Retarget Energy Dashboard statistic references after migration."""
+        manager = await async_get_manager(self.hass)
+        if manager.data is None:
+            return
+
+        preferences = cast(
+            "EnergyPreferences",
+            _replace_statistic_references(deepcopy(manager.data), replacements),
+        )
+        if preferences == manager.data:
+            return
+        await manager.async_update(preferences)
 
     async def _async_rename_legacy_statistic(
         self,
@@ -805,7 +913,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
             overlap_start - timedelta(days=LOOKUP_DAYS + 1),
             datetime(1970, 1, 1, tzinfo=UTC),
         )
-        for index, start_time in enumerate(search_starts):
+        for start_time in search_starts:
             existing_before = await get_instance(self.hass).async_add_executor_job(
                 partial(
                     statistics_during_period,
@@ -821,8 +929,6 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
             rows = (existing_before or {}).get(statistic_id, [])
             if rows:
                 return rows[-1].get("sum") or 0.0
-            if index == len(search_starts) - 1:
-                return 0.0
         return 0.0
 
     async def _insert_statistics(

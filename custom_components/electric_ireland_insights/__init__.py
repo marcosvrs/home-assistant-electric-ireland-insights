@@ -19,6 +19,7 @@ from homeassistant.helpers.entity_registry import (
     RegistryEntryDisabler,
 )
 from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
+from homeassistant.helpers.issue_registry import async_delete_issue
 
 from .const import CONF_DISCOUNT_PERCENTAGE, DOMAIN, _redact_id, hash_account_id
 from .coordinator import ElectricIrelandCoordinator
@@ -63,6 +64,24 @@ def _migrate_legacy_discount_to_options(hass: HomeAssistant, entry: ElectricIrel
         },
     )
     _LOGGER.info("Migrated legacy discount percentage into config entry options")
+
+
+_LEGACY_REPAIR_ISSUE_PREFIXES = (
+    "data_gap",
+    "backfill_auth_failed",
+    "backfill_connection_failed",
+    "backfill_failed",
+)
+
+
+def _migrate_legacy_repair_issues(
+    hass: HomeAssistant,
+    entry: ElectricIrelandConfigEntry,
+) -> None:
+    """Remove repair issues whose IDs contain the raw account number."""
+    account = entry.data["account_number"]
+    for prefix in _LEGACY_REPAIR_ISSUE_PREFIXES:
+        async_delete_issue(hass, DOMAIN, f"{prefix}_{account}")
 
 
 def _transfer_duplicate_registry_ownership(
@@ -117,15 +136,20 @@ def _restore_duplicate_registry_ownership(
         )
 
 
-def _merge_duplicate_options(
+def _merge_duplicate_config_entry_state(
     hass: HomeAssistant,
     entry: ElectricIrelandConfigEntry,
     duplicate_entry: ConfigEntry,
 ) -> None:
-    """Merge duplicate options after its removal succeeds."""
+    """Merge duplicate data and options after its removal succeeds."""
+    merged_data = {**entry.data, **duplicate_entry.data}
     merged_options = {**entry.options, **duplicate_entry.options}
-    if merged_options != entry.options:
-        hass.config_entries.async_update_entry(entry, options=merged_options)
+    if merged_data != entry.data or merged_options != entry.options:
+        hass.config_entries.async_update_entry(
+            entry,
+            data=merged_data,
+            options=merged_options,
+        )
 
 
 async def _migrate_legacy_config_entry_identity(
@@ -169,7 +193,7 @@ async def _migrate_legacy_config_entry_identity(
             if hass.config_entries.async_get_entry(duplicate_entry.entry_id) is None:
                 if removal["require_restart"]:
                     _LOGGER.warning("Removed duplicate Electric Ireland config entry; restart required")
-                _merge_duplicate_options(hass, entry, duplicate_entry)
+                _merge_duplicate_config_entry_state(hass, entry, duplicate_entry)
                 new_unique_id = account_hash
             else:
                 _restore_duplicate_registry_ownership(
@@ -356,6 +380,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ElectricIrelandConfigEnt
         _redact_id(entry.data["account_number"]),
     )
     await _migrate_legacy_config_entry_identity(hass, entry)
+    _migrate_legacy_repair_issues(hass, entry)
     _migrate_legacy_discount_to_options(hass, entry)
     _migrate_legacy_device(hass, entry)
     _migrate_legacy_entity_ids(hass, entry)
