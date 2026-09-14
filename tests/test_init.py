@@ -3,6 +3,7 @@
 import logging
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.helpers.device_registry import DeviceEntryDisabler
 from homeassistant.helpers.device_registry import async_get as async_get_device_registry
@@ -289,6 +290,82 @@ async def test_legacy_config_entry_identity_removal_failure_keeps_raw_id(
     assert retained_entity.icon == "mdi:flash"
     assert retained_entity.name == "Custom import time"
     assert "Could not remove duplicate Electric Ireland config entry" in caplog.text
+
+
+async def test_legacy_config_entry_identity_removal_exception_restores_registry_state(
+    hass,
+    mock_config_entry,
+):
+    """An exception during duplicate removal restores registry ownership."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    mock_config_entry.add_to_hass(hass)
+    account = mock_config_entry.data["account_number"]
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        title=f"{NAME} ({account}) - Main meter",
+        unique_id=account,
+        options={CONF_DISCOUNT_PERCENTAGE: 20},
+    )
+    hashed_entry = MockConfigEntry(
+        domain=DOMAIN,
+        data=mock_config_entry.data,
+        options={CONF_DISCOUNT_PERCENTAGE: 0},
+        unique_id=ACCOUNT_HASH,
+    )
+    hashed_entry.add_to_hass(hass)
+
+    device_registry = async_get_device_registry(hass)
+    duplicate_device = device_registry.async_get_or_create(
+        config_entry_id=hashed_entry.entry_id,
+        identifiers={(DOMAIN, ACCOUNT_HASH)},
+        name="Electric Ireland Insights",
+    )
+    device_registry.async_update_device(
+        duplicate_device.id,
+        area_id="hashed-area",
+        name_by_user="Main meter",
+    )
+    entity_registry = async_get_entity_registry(hass)
+    duplicate_entity = entity_registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        "hashed-last-import",
+        config_entry=hashed_entry,
+        suggested_object_id="hashed_last_import",
+        translation_key="last_import_time",
+    )
+    entity_registry.async_update_entity(
+        duplicate_entity.entity_id,
+        icon="mdi:flash",
+        name="Custom import time",
+    )
+
+    with (
+        patch.object(
+            hass.config_entries,
+            "async_remove",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("remove failed"),
+        ),
+        pytest.raises(RuntimeError, match="remove failed"),
+    ):
+        await _migrate_legacy_config_entry_identity(hass, mock_config_entry)
+
+    assert mock_config_entry.unique_id == account
+    assert mock_config_entry.options == {CONF_DISCOUNT_PERCENTAGE: 20}
+    assert hass.config_entries.async_get_entry(hashed_entry.entry_id) is hashed_entry
+    assert hashed_entry.options == {CONF_DISCOUNT_PERCENTAGE: 0}
+    retained_device = device_registry.async_get_device(identifiers={(DOMAIN, ACCOUNT_HASH)})
+    assert retained_device is not None
+    assert retained_device.config_entries == {hashed_entry.entry_id}
+    assert retained_device.area_id == "hashed-area"
+    assert retained_device.name_by_user == "Main meter"
+    retained_entity = entity_registry.async_get(duplicate_entity.entity_id)
+    assert retained_entity is not None
+    assert retained_entity.config_entry_id == hashed_entry.entry_id
+    assert retained_entity.icon == "mdi:flash"
+    assert retained_entity.name == "Custom import time"
 
 
 async def test_legacy_config_entry_identity_collision_with_other_account_is_preserved(
