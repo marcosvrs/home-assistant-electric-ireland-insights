@@ -16,6 +16,7 @@ from homeassistant.helpers.device_registry import async_get as async_get_device_
 from homeassistant.helpers.entity_registry import (
     EntityRegistry,
     RegistryEntry,
+    RegistryEntryDisabler,
 )
 from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
 
@@ -29,6 +30,18 @@ PLATFORMS = [Platform.SENSOR]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 type ElectricIrelandConfigEntry = ConfigEntry[ElectricIrelandCoordinator]
+
+
+async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
+    """Migrate legacy config-entry versions before setup."""
+    if config_entry.version < 2:
+        _LOGGER.debug(
+            "Migrating Electric Ireland entry from version %s to 2",
+            config_entry.version,
+        )
+        hass.config_entries.async_update_entry(config_entry, version=2)
+    return True
+
 
 _LEGACY_DIAGNOSTIC_ENTITY_KEYS = frozenset({"last_import_time", "data_freshness_days"})
 
@@ -52,7 +65,10 @@ def _migrate_legacy_discount_to_options(hass: HomeAssistant, entry: ElectricIrel
     _LOGGER.info("Migrated legacy discount percentage into config entry options")
 
 
-def _migrate_legacy_config_entry_identity(hass: HomeAssistant, entry: ElectricIrelandConfigEntry) -> None:
+async def _migrate_legacy_config_entry_identity(
+    hass: HomeAssistant,
+    entry: ElectricIrelandConfigEntry,
+) -> None:
     """Migrate raw config-entry identity to privacy-safe values."""
     account = entry.data["account_number"]
     account_hash = hash_account_id(account)
@@ -60,13 +76,26 @@ def _migrate_legacy_config_entry_identity(hass: HomeAssistant, entry: ElectricIr
     new_unique_id = entry.unique_id
 
     if entry.unique_id == account:
-        if any(
-            config_entry.entry_id != entry.entry_id and config_entry.unique_id == account_hash
-            for config_entry in hass.config_entries.async_entries(DOMAIN)
-        ):
-            _LOGGER.warning("Could not migrate legacy config entry identity: privacy-safe ID is already in use")
-        else:
+        duplicate_entry = next(
+            (
+                config_entry
+                for config_entry in hass.config_entries.async_entries(DOMAIN)
+                if config_entry.entry_id != entry.entry_id and config_entry.unique_id == account_hash
+            ),
+            None,
+        )
+        if duplicate_entry is None:
             new_unique_id = account_hash
+        elif duplicate_entry.data.get("account_number") == account:
+            removal = await hass.config_entries.async_remove(duplicate_entry.entry_id)
+            if removal["require_restart"]:
+                _LOGGER.warning("Removed duplicate Electric Ireland config entry; restart required")
+            if hass.config_entries.async_get_entry(duplicate_entry.entry_id) is None:
+                new_unique_id = account_hash
+            else:
+                _LOGGER.warning("Could not remove duplicate Electric Ireland config entry")
+        else:
+            _LOGGER.warning("Could not migrate legacy config entry identity: privacy-safe ID is already in use")
 
     if new_title == entry.title and new_unique_id == entry.unique_id:
         return
@@ -154,6 +183,18 @@ def _migrate_legacy_device(hass: HomeAssistant, entry: ElectricIrelandConfigEntr
     _LOGGER.info("Migrated legacy device to privacy-safe identifier")
 
 
+def _merge_entity_disabled_by(
+    source: RegistryEntry,
+    target: RegistryEntry,
+) -> RegistryEntryDisabler | None:
+    """Preserve explicit user state when merging duplicate entities."""
+    if RegistryEntryDisabler.USER in (source.disabled_by, target.disabled_by):
+        return RegistryEntryDisabler.USER
+    if source.disabled_by is None or target.disabled_by is None:
+        return None
+    return source.disabled_by
+
+
 def _merge_entity_customizations(
     registry: EntityRegistry,
     source: RegistryEntry,
@@ -165,7 +206,7 @@ def _merge_entity_customizations(
         aliases=source.aliases | target.aliases,
         area_id=source.area_id if source.area_id is not None else target.area_id,
         categories={**target.categories, **source.categories},
-        disabled_by=source.disabled_by if source.disabled_by is not None else target.disabled_by,
+        disabled_by=_merge_entity_disabled_by(source, target),
         hidden_by=source.hidden_by if source.hidden_by is not None else target.hidden_by,
         icon=source.icon if source.icon is not None else target.icon,
         labels=source.labels | target.labels,
@@ -228,7 +269,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ElectricIrelandConfigEnt
         "Setting up Electric Ireland entry, account=%s",
         _redact_id(entry.data["account_number"]),
     )
-    _migrate_legacy_config_entry_identity(hass, entry)
+    await _migrate_legacy_config_entry_identity(hass, entry)
     _migrate_legacy_discount_to_options(hass, entry)
     _migrate_legacy_device(hass, entry)
     _migrate_legacy_entity_ids(hass, entry)
@@ -237,6 +278,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ElectricIrelandConfigEnt
     entry.runtime_data = coordinator
 
     try:
+        await coordinator.async_migrate_legacy_statistics()
         await coordinator.async_clear_discounted_statistics()
         await coordinator.async_config_entry_first_refresh()
     except Exception:

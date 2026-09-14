@@ -989,6 +989,43 @@ async def test_options_flow_uses_legacy_data_discount(
     await async_wait_recording_done(hass)
 
 
+async def test_options_flow_uses_configured_discount_for_none_input(hass):
+    """Options flow falls back when direct input omits the discount value."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    from custom_components.electric_ireland_insights.config_flow import (
+        ElectricIrelandInsightsOptionsFlow,
+    )
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "username": "test@test.com",
+            "password": "testpass",
+            "account_number": ACCOUNT,
+        },
+        options={CONF_DISCOUNT_PERCENTAGE: 20},
+        unique_id=ACCOUNT_HASH,
+    )
+    entry.add_to_hass(hass)
+    flow = ElectricIrelandInsightsOptionsFlow()
+    flow.hass = hass
+    flow.handler = entry.entry_id
+
+    with patch.object(
+        flow,
+        "async_create_entry",
+        return_value={"data": {CONF_DISCOUNT_PERCENTAGE: 20}},
+    ) as mock_create_entry:
+        result = await flow.async_step_init({CONF_DISCOUNT_PERCENTAGE: None})
+
+    assert result == {"data": {CONF_DISCOUNT_PERCENTAGE: 20}}
+    mock_create_entry.assert_called_once_with(
+        title="",
+        data={CONF_DISCOUNT_PERCENTAGE: 20},
+    )
+
+
 @pytest.mark.parametrize(
     ("legacy_discount", "expected"),
     [(20, 20), (None, 0)],

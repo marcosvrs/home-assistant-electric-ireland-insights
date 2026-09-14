@@ -18,6 +18,7 @@ from custom_components.electric_ireland_insights import (
     _migrate_legacy_device,
     _migrate_legacy_discount_to_options,
     _migrate_legacy_entity_ids,
+    async_migrate_entry,
 )
 from custom_components.electric_ireland_insights.const import CONF_DISCOUNT_PERCENTAGE, DOMAIN, NAME, hash_account_id
 
@@ -105,7 +106,7 @@ async def test_legacy_config_entry_identity_is_migrated(hass, mock_config_entry)
         unique_id=account,
     )
 
-    _migrate_legacy_config_entry_identity(hass, mock_config_entry)
+    await _migrate_legacy_config_entry_identity(hass, mock_config_entry)
 
     assert mock_config_entry.unique_id == ACCOUNT_HASH
     assert mock_config_entry.title == f"{NAME} ({ACCOUNT_HASH}) - Main meter"
@@ -121,14 +122,14 @@ async def test_hashed_config_entry_title_is_migrated(hass, mock_config_entry):
         unique_id=ACCOUNT_HASH,
     )
 
-    _migrate_legacy_config_entry_identity(hass, mock_config_entry)
+    await _migrate_legacy_config_entry_identity(hass, mock_config_entry)
 
     assert mock_config_entry.unique_id == ACCOUNT_HASH
     assert mock_config_entry.title == f"{NAME} ({ACCOUNT_HASH}) - Main meter"
 
 
-async def test_legacy_config_entry_identity_collision_is_preserved(hass, mock_config_entry):
-    """A legacy ID is retained when another entry already owns its hash."""
+async def test_legacy_config_entry_identity_duplicate_is_removed(hass, mock_config_entry):
+    """A same-account hashed duplicate is removed before migration."""
     from pytest_homeassistant_custom_component.common import MockConfigEntry
 
     mock_config_entry.add_to_hass(hass)
@@ -145,11 +146,75 @@ async def test_legacy_config_entry_identity_collision_is_preserved(hass, mock_co
     )
     hashed_entry.add_to_hass(hass)
 
-    _migrate_legacy_config_entry_identity(hass, mock_config_entry)
+    await _migrate_legacy_config_entry_identity(hass, mock_config_entry)
+
+    assert mock_config_entry.unique_id == ACCOUNT_HASH
+    assert mock_config_entry.title == f"{NAME} ({ACCOUNT_HASH}) - Main meter"
+    assert hass.config_entries.async_get_entry(hashed_entry.entry_id) is None
+
+
+async def test_legacy_config_entry_identity_removal_failure_keeps_raw_id(hass, mock_config_entry, caplog):
+    """A failed duplicate removal does not claim the hashed ID."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    mock_config_entry.add_to_hass(hass)
+    account = mock_config_entry.data["account_number"]
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        title=f"{NAME} ({account}) - Main meter",
+        unique_id=account,
+    )
+    hashed_entry = MockConfigEntry(
+        domain=DOMAIN,
+        data=mock_config_entry.data,
+        unique_id=ACCOUNT_HASH,
+    )
+    hashed_entry.add_to_hass(hass)
+    caplog.set_level(logging.WARNING, logger="custom_components.electric_ireland_insights")
+
+    with patch.object(
+        hass.config_entries,
+        "async_remove",
+        new_callable=AsyncMock,
+        return_value={"require_restart": True},
+    ):
+        await _migrate_legacy_config_entry_identity(hass, mock_config_entry)
 
     assert mock_config_entry.unique_id == account
     assert mock_config_entry.title == f"{NAME} ({ACCOUNT_HASH}) - Main meter"
-    assert hashed_entry.unique_id == ACCOUNT_HASH
+    assert hass.config_entries.async_get_entry(hashed_entry.entry_id) is hashed_entry
+    assert "Could not remove duplicate Electric Ireland config entry" in caplog.text
+
+
+async def test_legacy_config_entry_identity_collision_with_other_account_is_preserved(
+    hass,
+    mock_config_entry,
+    caplog,
+):
+    """A privacy-safe ID owned by another account remains untouched."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    mock_config_entry.add_to_hass(hass)
+    account = mock_config_entry.data["account_number"]
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        title=f"{NAME} ({account}) - Main meter",
+        unique_id=account,
+    )
+    other_entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={**mock_config_entry.data, "account_number": "100000002"},
+        unique_id=ACCOUNT_HASH,
+    )
+    other_entry.add_to_hass(hass)
+    caplog.set_level(logging.WARNING, logger="custom_components.electric_ireland_insights")
+
+    await _migrate_legacy_config_entry_identity(hass, mock_config_entry)
+
+    assert mock_config_entry.unique_id == account
+    assert mock_config_entry.title == f"{NAME} ({ACCOUNT_HASH}) - Main meter"
+    assert hass.config_entries.async_get_entry(other_entry.entry_id) is other_entry
+    assert "privacy-safe ID is already in use" in caplog.text
 
 
 async def test_setup_entry_with_full_history_import(recorder_mock, hass, enable_custom_integrations, caplog):
@@ -291,8 +356,40 @@ async def test_unload_entry_keeps_session_open_when_platform_unload_fails(
         await coordinator.async_close()
 
 
-async def test_setup_entry_version_one_without_migration(recorder_mock, hass, enable_custom_integrations, caplog):
-    """Test version 1 entries load directly without migration."""
+async def test_async_migrate_entry_promotes_legacy_version(hass):
+    """Legacy version 1 entries are promoted before setup."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"account_number": "100000001"},
+        version=1,
+        unique_id=ACCOUNT_HASH,
+    )
+    entry.add_to_hass(hass)
+
+    assert await async_migrate_entry(hass, entry) is True
+    assert entry.version == 2
+
+
+async def test_async_migrate_entry_keeps_current_version(hass):
+    """Current config-entry versions do not need migration."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"account_number": "100000001"},
+        version=2,
+        unique_id=ACCOUNT_HASH,
+    )
+    entry.add_to_hass(hass)
+
+    assert await async_migrate_entry(hass, entry) is True
+    assert entry.version == 2
+
+
+async def test_setup_entry_version_two_reaches_setup(recorder_mock, hass, enable_custom_integrations, caplog):
+    """Version 2 entries reach setup and load successfully."""
     caplog.set_level(logging.DEBUG, logger="custom_components.electric_ireland_insights")
     from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -306,7 +403,7 @@ async def test_setup_entry_version_one_without_migration(recorder_mock, hass, en
             "contract_id": None,
             "premise_id": None,
         },
-        version=1,
+        version=2,
         unique_id=ACCOUNT_HASH,
     )
     entry.add_to_hass(hass)
@@ -328,7 +425,7 @@ async def test_setup_entry_version_one_without_migration(recorder_mock, hass, en
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-    assert entry.version == 1
+    assert entry.version == 2
     assert "Migrating Electric Ireland entry" not in caplog.text
 
 
@@ -682,6 +779,84 @@ async def test_duplicate_legacy_diagnostic_entity_is_removed(hass, mock_config_e
     assert retained.icon == "mdi:flash"
     assert retained.labels == {"important"}
     assert retained.name == "Custom import time"
+
+
+async def test_enabled_legacy_entity_wins_over_disabled_hashed_entity(hass, mock_config_entry):
+    """An enabled legacy diagnostic entity stays enabled after merging."""
+    mock_config_entry.add_to_hass(hass)
+    registry = async_get_entity_registry(hass)
+    account = mock_config_entry.data["account_number"]
+    account_hash = hash_account_id(account)
+    key = "last_import_time"
+
+    hashed = registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        f"{DOMAIN}_{account_hash}_{key}",
+        config_entry=mock_config_entry,
+        suggested_object_id=f"{DOMAIN}_{account_hash}_{key}",
+        translation_key=key,
+    )
+    legacy = registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        f"{DOMAIN}_{account}_{key}",
+        config_entry=mock_config_entry,
+        suggested_object_id=f"{DOMAIN}_{account}_{key}",
+        translation_key=key,
+    )
+    registry.async_update_entity(
+        hashed.entity_id,
+        disabled_by=RegistryEntryDisabler.INTEGRATION,
+    )
+
+    _migrate_legacy_entity_ids(hass, mock_config_entry)
+
+    assert registry.async_get(legacy.entity_id) is None
+    retained = registry.async_get(hashed.entity_id)
+    assert retained is not None
+    assert retained.disabled_by is None
+
+
+async def test_disabled_legacy_entity_preserves_disabled_state_when_merged(hass, mock_config_entry):
+    """Merging two integration-disabled entities retains the disabled state."""
+    mock_config_entry.add_to_hass(hass)
+    registry = async_get_entity_registry(hass)
+    account = mock_config_entry.data["account_number"]
+    account_hash = hash_account_id(account)
+    key = "last_import_time"
+
+    hashed = registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        f"{DOMAIN}_{account_hash}_{key}",
+        config_entry=mock_config_entry,
+        suggested_object_id=f"{DOMAIN}_{account_hash}_{key}",
+        translation_key=key,
+    )
+    legacy = registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        f"{DOMAIN}_{account}_{key}",
+        config_entry=mock_config_entry,
+        suggested_object_id=f"{DOMAIN}_{account}_{key}",
+        translation_key=key,
+    )
+    registry.async_update_entity(
+        hashed.entity_id,
+        disabled_by=RegistryEntryDisabler.INTEGRATION,
+    )
+    registry.async_update_entity(
+        legacy.entity_id,
+        disabled_by=RegistryEntryDisabler.INTEGRATION,
+    )
+
+    _migrate_legacy_entity_ids(hass, mock_config_entry)
+
+    assert registry.async_get(legacy.entity_id) is None
+    retained = registry.async_get(hashed.entity_id)
+    assert retained is not None
+    assert retained.disabled_by is RegistryEntryDisabler.INTEGRATION
 
 
 async def test_custom_legacy_diagnostic_entity_id_is_preserved(hass, mock_config_entry):

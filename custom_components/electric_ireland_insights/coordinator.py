@@ -2,28 +2,32 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from functools import partial
 from typing import Literal
 
 import aiohttp
+from homeassistant.components.recorder.core import Recorder
 from homeassistant.components.recorder.models import StatisticData, StatisticMeanType, StatisticMetaData
 from homeassistant.components.recorder.statistics import (
     async_add_external_statistics,
-    clear_statistics,
     get_last_statistics,
     get_metadata,
     statistics_during_period,
 )
+from homeassistant.components.recorder.tasks import RecorderTask
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfEnergy
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.issue_registry import IssueSeverity, async_create_issue, async_delete_issue
-from homeassistant.helpers.recorder import get_instance
+from homeassistant.helpers.recorder import get_instance, session_scope
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util.dt import now as dt_now
 from homeassistant.util.dt import utcnow
@@ -57,6 +61,24 @@ async def _close_session(session: aiohttp.ClientSession) -> None:
     close_result = session.close()
     if inspect.isawaitable(close_result):
         await close_result
+
+
+@dataclass(slots=True)
+class _RecorderCallbackTask(RecorderTask):
+    """Run a recorder-thread callback and report its completion."""
+
+    action: Callable[[Recorder], None]
+    on_done: Callable[[Exception | None], None]
+
+    def run(self, instance: Recorder) -> None:
+        """Run the callback on the recorder thread."""
+        try:
+            self.action(instance)
+        except Exception as err:
+            self.on_done(err)
+            raise
+        else:
+            self.on_done(None)
 
 
 TARIFF_BUCKET_MAP_DISPLAY: dict[str, str] = {
@@ -117,6 +139,103 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
             discount = self._config_entry.data.get(CONF_DISCOUNT_PERCENTAGE, DEFAULT_DISCOUNT_PERCENTAGE)
         return int(discount)
 
+    async def async_migrate_legacy_statistics(self) -> None:
+        """Rename raw-account statistic metadata to privacy-safe IDs."""
+        recorder = get_instance(self.hass)
+        metadata = await recorder.async_add_executor_job(partial(get_metadata, self.hass, statistic_source=DOMAIN))
+        legacy_prefix = f"{DOMAIN}:{self._account}_"
+        for old_statistic_id in sorted(metadata):
+            if not old_statistic_id.startswith(legacy_prefix):
+                continue
+
+            new_statistic_id = f"{DOMAIN}:{self._account_hash}_{old_statistic_id[len(legacy_prefix) :]}"
+            if new_statistic_id in metadata:
+                _LOGGER.warning(
+                    "Could not migrate legacy statistic identity for account=%s: "
+                    "retaining hashed data and removing raw data",
+                    _redact_id(self._account),
+                )
+                await self._async_clear_statistics(recorder, [old_statistic_id])
+                metadata.pop(old_statistic_id)
+                continue
+
+            metadata_id, old_metadata = metadata[old_statistic_id]
+            old_name = old_metadata.get("name")
+            new_metadata: StatisticMetaData = {
+                **old_metadata,
+                "name": old_name.replace(self._account, self._account_hash) if old_name is not None else None,
+                "statistic_id": new_statistic_id,
+            }
+            await self._async_rename_legacy_statistic(
+                recorder,
+                old_statistic_id=old_statistic_id,
+                new_statistic_id=new_statistic_id,
+                metadata_id=metadata_id,
+                old_metadata=old_metadata,
+                new_metadata=new_metadata,
+            )
+            metadata[new_statistic_id] = metadata.pop(old_statistic_id)
+
+    async def _async_rename_legacy_statistic(
+        self,
+        recorder: Recorder,
+        *,
+        old_statistic_id: str,
+        new_statistic_id: str,
+        metadata_id: int,
+        old_metadata: StatisticMetaData,
+        new_metadata: StatisticMetaData,
+    ) -> None:
+        """Wait for one recorder-thread statistic rename."""
+
+        def _rename(instance: Recorder) -> None:
+            with session_scope(session=instance.get_session()) as session:
+                instance.statistics_meta_manager.update_statistic_id(
+                    session,
+                    DOMAIN,
+                    old_statistic_id,
+                    new_statistic_id,
+                )
+                instance.statistics_meta_manager.update_or_add(
+                    session,
+                    new_metadata,
+                    {new_statistic_id: (metadata_id, old_metadata)},
+                )
+
+        await self._async_run_recorder_task(recorder, _rename)
+
+    async def _async_clear_statistics(self, recorder: Recorder, statistic_ids: list[str]) -> None:
+        """Wait for one recorder-thread statistic cleanup."""
+
+        def _clear(instance: Recorder) -> None:
+            with session_scope(session=instance.get_session()) as session:
+                instance.statistics_meta_manager.delete(session, statistic_ids)
+
+        await self._async_run_recorder_task(recorder, _clear)
+
+    async def _async_run_recorder_task(
+        self,
+        recorder: Recorder,
+        action: Callable[[Recorder], None],
+    ) -> None:
+        """Wait for one recorder task callback."""
+        loop = asyncio.get_running_loop()
+        completed = loop.create_future()
+
+        def _on_done(error: Exception | None) -> None:
+            def _resolve() -> None:
+                if completed.done():
+                    return
+                if error is None:
+                    completed.set_result(None)
+                else:
+                    completed.set_exception(error)
+
+            loop.call_soon_threadsafe(_resolve)
+
+        recorder.queue_task(_RecorderCallbackTask(action, _on_done))
+        await completed
+
     async def async_clear_discounted_statistics(self) -> None:
         """Remove stale discounted statistics when no discount is configured."""
         discount = self._get_discount_percentage()
@@ -139,9 +258,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
         if not statistic_ids:
             return
 
-        await get_instance(self.hass).async_add_executor_job(
-            partial(clear_statistics, get_instance(self.hass), statistic_ids)
-        )
+        await self._async_clear_statistics(get_instance(self.hass), statistic_ids)
         _LOGGER.info(
             "Removed %d discounted statistics because the configured discount is 0",
             len(statistic_ids),
