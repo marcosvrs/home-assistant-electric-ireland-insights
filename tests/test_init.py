@@ -215,8 +215,12 @@ async def test_legacy_config_entry_identity_preserves_duplicate_state(hass, mock
     assert retained_entity.name == "Custom import time"
 
 
-async def test_legacy_config_entry_identity_removal_failure_keeps_raw_id(hass, mock_config_entry, caplog):
-    """A failed duplicate removal does not claim the hashed ID."""
+async def test_legacy_config_entry_identity_removal_failure_keeps_raw_id(
+    hass,
+    mock_config_entry,
+    caplog,
+):
+    """A failed duplicate removal does not move state to the raw entry."""
     from pytest_homeassistant_custom_component.common import MockConfigEntry
 
     mock_config_entry.add_to_hass(hass)
@@ -225,13 +229,41 @@ async def test_legacy_config_entry_identity_removal_failure_keeps_raw_id(hass, m
         mock_config_entry,
         title=f"{NAME} ({account}) - Main meter",
         unique_id=account,
+        options={CONF_DISCOUNT_PERCENTAGE: 20},
     )
     hashed_entry = MockConfigEntry(
         domain=DOMAIN,
         data=mock_config_entry.data,
+        options={CONF_DISCOUNT_PERCENTAGE: 0},
         unique_id=ACCOUNT_HASH,
     )
     hashed_entry.add_to_hass(hass)
+
+    device_registry = async_get_device_registry(hass)
+    duplicate_device = device_registry.async_get_or_create(
+        config_entry_id=hashed_entry.entry_id,
+        identifiers={(DOMAIN, ACCOUNT_HASH)},
+        name="Electric Ireland Insights",
+    )
+    device_registry.async_update_device(
+        duplicate_device.id,
+        area_id="hashed-area",
+        name_by_user="Main meter",
+    )
+    entity_registry = async_get_entity_registry(hass)
+    duplicate_entity = entity_registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        "hashed-last-import",
+        config_entry=hashed_entry,
+        suggested_object_id="hashed_last_import",
+        translation_key="last_import_time",
+    )
+    entity_registry.async_update_entity(
+        duplicate_entity.entity_id,
+        icon="mdi:flash",
+        name="Custom import time",
+    )
     caplog.set_level(logging.WARNING, logger="custom_components.electric_ireland_insights")
 
     with patch.object(
@@ -244,7 +276,18 @@ async def test_legacy_config_entry_identity_removal_failure_keeps_raw_id(hass, m
 
     assert mock_config_entry.unique_id == account
     assert mock_config_entry.title == f"{NAME} ({ACCOUNT_HASH}) - Main meter"
+    assert mock_config_entry.options == {CONF_DISCOUNT_PERCENTAGE: 20}
     assert hass.config_entries.async_get_entry(hashed_entry.entry_id) is hashed_entry
+    retained_device = device_registry.async_get_device(identifiers={(DOMAIN, ACCOUNT_HASH)})
+    assert retained_device is not None
+    assert retained_device.config_entries == {hashed_entry.entry_id}
+    assert retained_device.area_id == "hashed-area"
+    assert retained_device.name_by_user == "Main meter"
+    retained_entity = entity_registry.async_get(duplicate_entity.entity_id)
+    assert retained_entity is not None
+    assert retained_entity.config_entry_id == hashed_entry.entry_id
+    assert retained_entity.icon == "mdi:flash"
+    assert retained_entity.name == "Custom import time"
     assert "Could not remove duplicate Electric Ireland config entry" in caplog.text
 
 

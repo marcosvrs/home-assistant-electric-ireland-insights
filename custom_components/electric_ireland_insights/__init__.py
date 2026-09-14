@@ -65,31 +65,67 @@ def _migrate_legacy_discount_to_options(hass: HomeAssistant, entry: ElectricIrel
     _LOGGER.info("Migrated legacy discount percentage into config entry options")
 
 
-def _preserve_duplicate_config_entry_state(
+def _transfer_duplicate_registry_ownership(
     hass: HomeAssistant,
     entry: ElectricIrelandConfigEntry,
     duplicate_entry: ConfigEntry,
-) -> None:
-    """Preserve duplicate config-entry state before removing it."""
-    merged_options = {**entry.options, **duplicate_entry.options}
-    if merged_options != entry.options:
-        hass.config_entries.async_update_entry(entry, options=merged_options)
-
+) -> tuple[list[str], list[str]]:
+    """Transfer duplicate registry ownership before removing the entry."""
     device_registry = async_get_device_registry(hass)
+    moved_device_ids: list[str] = []
     for device in tuple(device_registry.devices.values()):
-        if duplicate_entry.entry_id in device.config_entries:
+        if duplicate_entry.entry_id in device.config_entries and entry.entry_id not in device.config_entries:
             device_registry.async_update_device(
                 device.id,
                 add_config_entry_id=entry.entry_id,
             )
+            moved_device_ids.append(device.id)
 
     entity_registry = async_get_entity_registry(hass)
+    moved_entity_ids: list[str] = []
     for entity in tuple(entity_registry.entities.values()):
         if entity.config_entry_id == duplicate_entry.entry_id:
             entity_registry.async_update_entity(
                 entity.entity_id,
                 config_entry_id=entry.entry_id,
             )
+            moved_entity_ids.append(entity.entity_id)
+
+    return moved_device_ids, moved_entity_ids
+
+
+def _restore_duplicate_registry_ownership(
+    hass: HomeAssistant,
+    entry: ElectricIrelandConfigEntry,
+    duplicate_entry: ConfigEntry,
+    moved_device_ids: list[str],
+    moved_entity_ids: list[str],
+) -> None:
+    """Restore registry ownership after a failed duplicate removal."""
+    device_registry = async_get_device_registry(hass)
+    for device_id in moved_device_ids:
+        device_registry.async_update_device(
+            device_id,
+            remove_config_entry_id=entry.entry_id,
+        )
+
+    entity_registry = async_get_entity_registry(hass)
+    for entity_id in moved_entity_ids:
+        entity_registry.async_update_entity(
+            entity_id,
+            config_entry_id=duplicate_entry.entry_id,
+        )
+
+
+def _merge_duplicate_options(
+    hass: HomeAssistant,
+    entry: ElectricIrelandConfigEntry,
+    duplicate_entry: ConfigEntry,
+) -> None:
+    """Merge duplicate options after its removal succeeds."""
+    merged_options = {**entry.options, **duplicate_entry.options}
+    if merged_options != entry.options:
+        hass.config_entries.async_update_entry(entry, options=merged_options)
 
 
 async def _migrate_legacy_config_entry_identity(
@@ -114,13 +150,35 @@ async def _migrate_legacy_config_entry_identity(
         if duplicate_entry is None:
             new_unique_id = account_hash
         elif duplicate_entry.data.get("account_number") == account:
-            _preserve_duplicate_config_entry_state(hass, entry, duplicate_entry)
-            removal = await hass.config_entries.async_remove(duplicate_entry.entry_id)
-            if removal["require_restart"]:
-                _LOGGER.warning("Removed duplicate Electric Ireland config entry; restart required")
+            moved_device_ids, moved_entity_ids = _transfer_duplicate_registry_ownership(
+                hass,
+                entry,
+                duplicate_entry,
+            )
+            try:
+                removal = await hass.config_entries.async_remove(duplicate_entry.entry_id)
+            except BaseException:
+                _restore_duplicate_registry_ownership(
+                    hass,
+                    entry,
+                    duplicate_entry,
+                    moved_device_ids,
+                    moved_entity_ids,
+                )
+                raise
             if hass.config_entries.async_get_entry(duplicate_entry.entry_id) is None:
+                if removal["require_restart"]:
+                    _LOGGER.warning("Removed duplicate Electric Ireland config entry; restart required")
+                _merge_duplicate_options(hass, entry, duplicate_entry)
                 new_unique_id = account_hash
             else:
+                _restore_duplicate_registry_ownership(
+                    hass,
+                    entry,
+                    duplicate_entry,
+                    moved_device_ids,
+                    moved_entity_ids,
+                )
                 _LOGGER.warning("Could not remove duplicate Electric Ireland config entry")
         else:
             _LOGGER.warning("Could not migrate legacy config entry identity: privacy-safe ID is already in use")
