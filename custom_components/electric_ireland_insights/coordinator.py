@@ -69,14 +69,41 @@ async def _close_session(session: aiohttp.ClientSession) -> None:
         await close_result
 
 
-def _replace_statistic_references(value: object, replacements: Mapping[str, str]) -> object:
+def _replace_statistic_references(
+    value: object,
+    replacements: Mapping[str, str],
+    *,
+    legacy_prefix: str,
+    hashed_prefix: str,
+) -> object:
     """Replace statistic IDs in a nested Energy Dashboard preference."""
     if isinstance(value, str):
-        return replacements.get(value, value)
+        replacement = replacements.get(value)
+        if replacement is not None:
+            return replacement
+        if value.startswith(legacy_prefix):
+            return f"{hashed_prefix}{value[len(legacy_prefix) :]}"
+        return value
     if isinstance(value, list):
-        return [_replace_statistic_references(item, replacements) for item in value]
+        return [
+            _replace_statistic_references(
+                item,
+                replacements,
+                legacy_prefix=legacy_prefix,
+                hashed_prefix=hashed_prefix,
+            )
+            for item in value
+        ]
     if isinstance(value, dict):
-        return {key: _replace_statistic_references(item, replacements) for key, item in value.items()}
+        return {
+            key: _replace_statistic_references(
+                item,
+                replacements,
+                legacy_prefix=legacy_prefix,
+                hashed_prefix=hashed_prefix,
+            )
+            for key, item in value.items()
+        }
     return value
 
 
@@ -203,8 +230,7 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
             statistic_replacements[old_statistic_id] = new_statistic_id
             metadata[new_statistic_id] = metadata.pop(old_statistic_id)
 
-        if statistic_replacements:
-            await self._async_migrate_energy_preferences(statistic_replacements)
+        await self._async_migrate_energy_preferences(statistic_replacements)
 
     async def _async_merge_legacy_statistic(
         self,
@@ -224,6 +250,19 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
 
                 old_metadata_id = old_metadata[0]
                 new_metadata_id = new_metadata[0]
+                current_name = new_metadata[1].get("name")
+                if current_name is not None:
+                    sanitized_name = current_name.replace(self._account, self._account_hash)
+                    if sanitized_name != current_name:
+                        instance.statistics_meta_manager.update_or_add(
+                            session,
+                            {
+                                **new_metadata[1],
+                                "name": sanitized_name,
+                                "statistic_id": new_statistic_id,
+                            },
+                            {new_statistic_id: (new_metadata_id, new_metadata[1])},
+                        )
                 old_rows = (
                     session.query(Statistics)
                     .filter(Statistics.metadata_id == old_metadata_id)
@@ -278,7 +317,12 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
 
         preferences = cast(
             "EnergyPreferences",
-            _replace_statistic_references(deepcopy(manager.data), replacements),
+            _replace_statistic_references(
+                deepcopy(manager.data),
+                replacements,
+                legacy_prefix=f"{DOMAIN}:{self._account}_",
+                hashed_prefix=f"{DOMAIN}:{self._account_hash}_",
+            ),
         )
         if preferences == manager.data:
             return

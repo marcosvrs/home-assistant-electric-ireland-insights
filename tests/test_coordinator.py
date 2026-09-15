@@ -1024,7 +1024,7 @@ async def test_legacy_external_statistic_collision_merges_raw_history(
         StatisticMetaData(
             has_sum=True,
             mean_type=StatisticMeanType.NONE,
-            name=f"Electric Ireland Consumption ({mock_config_entry.unique_id})",
+            name=f"Electric Ireland Consumption ({ACCOUNT})",
             source=DOMAIN,
             statistic_id=hashed_id,
             unit_of_measurement="kWh",
@@ -1229,7 +1229,7 @@ async def test_legacy_external_statistics_update_energy_dashboard_references(
     hass,
     mock_config_entry,
 ):
-    """Hashing external statistics retargets Energy Dashboard preferences."""
+    """Hashing external statistics retargets Energy Dashboard preferences and retries failures."""
     mock_config_entry.add_to_hass(hass)
     legacy_consumption_id = f"{DOMAIN}:{ACCOUNT}_consumption"
     legacy_cost_id = f"{DOMAIN}:{ACCOUNT}_cost"
@@ -1293,14 +1293,27 @@ async def test_legacy_external_statistics_update_energy_dashboard_references(
 
     await async_wait_recording_done(hass)
 
+    original_async_update = manager.async_update
+    update_attempts = 0
+
+    async def update_preferences(preferences):
+        nonlocal update_attempts
+        update_attempts += 1
+        if update_attempts == 1:
+            raise RuntimeError("dashboard update failed")
+        await original_async_update(preferences)
+
     with (
         patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI"),
         patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession") as mock_session,
+        patch.object(manager, "async_update", side_effect=update_preferences),
     ):
         mock_session.return_value = AsyncMock()
         from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
 
         coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
+        with pytest.raises(RuntimeError, match="dashboard update failed"):
+            await coordinator.async_migrate_legacy_statistics()
         await coordinator.async_migrate_legacy_statistics()
         await coordinator._async_migrate_energy_preferences(
             {
@@ -1309,6 +1322,8 @@ async def test_legacy_external_statistics_update_energy_dashboard_references(
             }
         )
         await coordinator.async_close()
+
+    assert update_attempts == 2
 
     assert manager.data is not None
     source = manager.data["energy_sources"][0]
