@@ -1,12 +1,21 @@
 """Tests for the Electric Ireland coordinator."""
 
+import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC, date, datetime, timedelta
+from functools import partial
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
+from homeassistant.components.energy.data import async_get_manager
 from homeassistant.components.recorder import get_instance
-from homeassistant.components.recorder.statistics import statistics_during_period
+from homeassistant.components.recorder.models import StatisticData, StatisticMeanType, StatisticMetaData
+from homeassistant.components.recorder.statistics import (
+    async_add_external_statistics,
+    get_metadata,
+    statistics_during_period,
+)
 from homeassistant.const import UnitOfEnergy
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.issue_registry import IssueSeverity
@@ -83,6 +92,37 @@ def _setup_api_mock(
         mock_api_instance.get_hourly_usage = AsyncMock(return_value=hourly_return)
     else:
         mock_api_instance.get_hourly_usage = AsyncMock(return_value=[])
+
+
+class _CountingLock:
+    """Count provider lock acquisitions without serializing a single test flow."""
+
+    def __init__(self) -> None:
+        self.enter_count = 0
+
+    async def __aenter__(self) -> None:
+        self.enter_count += 1
+
+    async def __aexit__(self, *_args: object) -> None:
+        return None
+
+
+class _InterleavingLock:
+    """Run a competing update after the first backfill request releases."""
+
+    def __init__(self, on_third_release: Callable[[], Awaitable[None]]) -> None:
+        self._lock = asyncio.Lock()
+        self._release_count = 0
+        self._on_third_release = on_third_release
+
+    async def __aenter__(self) -> None:
+        await self._lock.acquire()
+
+    async def __aexit__(self, *_args: object) -> None:
+        self._lock.release()
+        self._release_count += 1
+        if self._release_count == 3:
+            await self._on_third_release()
 
 
 # ---------------------------------------------------------------------------
@@ -285,7 +325,7 @@ async def test_tariff_backfill_retries_on_cached_ids_invalid(recorder_mock, hass
     ):
         mock_api_instance = AsyncMock()
         ids = {"partner": "P", "contract": "C", "premise": "PR"}
-        mock_api_instance.authenticate = AsyncMock(return_value=(ids, ids))
+        mock_api_instance.authenticate = AsyncMock(side_effect=[(ids, ids), (ids, ids)])
         mock_api_instance.get_bill_periods = AsyncMock(return_value=[])
         mock_api_instance.get_hourly_usage = AsyncMock(
             side_effect=[CachedIdsInvalid("stale")] + [make_datapoints(1)] + [[] for _ in range(50)]
@@ -299,6 +339,9 @@ async def test_tariff_backfill_retries_on_cached_ids_invalid(recorder_mock, hass
 
     assert entry.data.get("tariff_stats_initialized") is True
     assert mock_api_instance.authenticate.call_count == 2
+    assert entry.data["partner_id"] == "P"
+    assert entry.data["contract_id"] == "C"
+    assert entry.data["premise_id"] == "PR"
 
 
 async def test_update_data_refreshes_cached_ids_after_stale_login(recorder_mock, hass):
@@ -540,10 +583,14 @@ async def test_consumption_statistics_correct(recorder_mock, hass, mock_config_e
         },
     ]
     direct_stat_id = f"{DOMAIN}:{ACCOUNT_HASH}_direct_consumption"
+
+    def existing_statistics(_hass, _start, _end, statistic_ids, *_args):
+        return {statistic_id: [{"sum": 0.0}] for statistic_id in statistic_ids}
+
     with (
         patch(
             "custom_components.electric_ireland_insights.coordinator.statistics_during_period",
-            return_value={direct_stat_id: [{"sum": 0.0}]},
+            side_effect=existing_statistics,
         ) as mock_existing,
         patch("custom_components.electric_ireland_insights.coordinator.async_add_external_statistics") as mock_add,
     ):
@@ -570,7 +617,7 @@ async def test_consumption_statistics_correct(recorder_mock, hass, mock_config_e
 
     assert mock_existing.call_args_list[0] == call(
         hass,
-        datetime(1970, 1, 1, tzinfo=UTC),
+        datetime(2026, 3, 18, 0, 0, tzinfo=UTC),
         datetime(2026, 3, 23, 0, 0, tzinfo=UTC),
         {direct_stat_id},
         "hour",
@@ -768,8 +815,8 @@ async def test_cost_discounted_statistic_not_created_when_discount_zero(recorder
     assert abs(stats[STAT_ID_COST][-1]["sum"] - gross_total) < 0.01
 
 
-async def test_cost_discounted_statistic_ignores_legacy_data_discount(recorder_mock, hass, mock_config_entry):
-    """Test legacy data-only discount does not create _cost_discounted."""
+async def test_legacy_data_discount_is_preserved(recorder_mock, hass, mock_config_entry):
+    """A legacy data-only discount is still applied to imported statistics."""
     mock_config_entry.add_to_hass(hass)
     hass.config_entries.async_update_entry(
         mock_config_entry,
@@ -816,7 +863,500 @@ async def test_cost_discounted_statistic_ignores_legacy_data_discount(recorder_m
         {"sum", "state"},
     )
     assert STAT_ID_COST in stats
-    assert STAT_ID_COST_DISCOUNTED not in stats
+    assert STAT_ID_COST_DISCOUNTED in stats
+    gross_total = sum(dp["cost"] for dp in datapoints)
+    assert abs(stats[STAT_ID_COST_DISCOUNTED][-1]["sum"] - gross_total * 0.8) < 0.01
+
+
+async def test_recorder_task_action_error_propagates(recorder_mock, hass, mock_config_entry):
+    """Recorder task callback errors reach the awaiting coroutine."""
+    mock_config_entry.add_to_hass(hass)
+    with (
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI"),
+        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
+    ):
+        from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
+
+        coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
+
+        def fail(_recorder) -> None:
+            raise RuntimeError("recorder callback failed")
+
+        with pytest.raises(RuntimeError, match="recorder callback failed"):
+            await coordinator._async_run_recorder_task(get_instance(hass), fail)
+        await coordinator.async_close()
+
+
+async def test_recorder_task_ignores_duplicate_completion_callbacks(hass, mock_config_entry):
+    """A recorder task completion callback is safe when delivered twice."""
+    mock_config_entry.add_to_hass(hass)
+    with (
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI"),
+        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
+    ):
+        from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
+
+        coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
+        recorder = MagicMock()
+
+        def queue_task(task) -> None:
+            task.on_done(None)
+            task.on_done(None)
+
+        recorder.queue_task.side_effect = queue_task
+        await coordinator._async_run_recorder_task(recorder, lambda _recorder: None)
+        await coordinator.async_close()
+
+
+async def test_legacy_external_statistics_are_renamed(recorder_mock, hass, mock_config_entry):
+    """All legacy external statistic IDs retain their recorded data after hashing."""
+    mock_config_entry.add_to_hass(hass)
+    legacy_suffixes = (
+        "consumption",
+        "cost",
+        "cost_discounted",
+        "consumption_flat_rate",
+        "cost_flat_rate",
+        "cost_flat_rate_discounted",
+        "consumption_off_peak",
+        "cost_off_peak",
+        "cost_off_peak_discounted",
+        "consumption_mid_peak",
+        "cost_mid_peak",
+        "cost_mid_peak_discounted",
+        "consumption_on_peak",
+        "cost_on_peak",
+        "cost_on_peak_discounted",
+    )
+    start = datetime(2026, 3, 23, tzinfo=UTC)
+
+    for suffix in legacy_suffixes:
+        statistic_id = f"{DOMAIN}:{ACCOUNT}_{suffix}"
+        is_consumption = suffix.startswith("consumption")
+        metadata = StatisticMetaData(
+            has_sum=True,
+            mean_type=StatisticMeanType.NONE,
+            name=f"Electric Ireland {suffix} ({ACCOUNT})",
+            source=DOMAIN,
+            statistic_id=statistic_id,
+            unit_of_measurement="kWh" if is_consumption else "EUR",
+            unit_class="energy" if is_consumption else None,
+        )
+        async_add_external_statistics(
+            hass,
+            metadata,
+            [
+                StatisticData(start=start, state=1.0, sum=1.0),
+                StatisticData(start=start + timedelta(hours=1), state=2.0, sum=3.0),
+            ],
+        )
+
+    await async_wait_recording_done(hass)
+
+    with (
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI"),
+        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession") as mock_session,
+    ):
+        mock_session.return_value = AsyncMock()
+        from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
+
+        coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
+        await coordinator.async_migrate_legacy_statistics()
+        await coordinator.async_close()
+
+    await async_wait_recording_done(hass)
+
+    account_hash = mock_config_entry.unique_id
+    hashed_ids = {f"{DOMAIN}:{account_hash}_{suffix}" for suffix in legacy_suffixes}
+    metadata = await get_instance(hass).async_add_executor_job(partial(get_metadata, hass, statistic_source=DOMAIN))
+    assert hashed_ids <= metadata.keys()
+    assert {metadata[statistic_id][1]["name"] for statistic_id in hashed_ids} == {
+        f"Electric Ireland {suffix} ({account_hash})" for suffix in legacy_suffixes
+    }
+    assert not ({f"{DOMAIN}:{ACCOUNT}_{suffix}" for suffix in legacy_suffixes} & metadata.keys())
+
+    stats = await get_instance(hass).async_add_executor_job(
+        statistics_during_period,
+        hass,
+        start - timedelta(hours=1),
+        start + timedelta(days=1),
+        hashed_ids,
+        "hour",
+        None,
+        {"sum", "state"},
+    )
+    assert set(stats) == hashed_ids
+    assert {rows[-1]["sum"] for rows in stats.values()} == {3.0}
+
+
+async def test_legacy_external_statistic_collision_merges_raw_history(
+    recorder_mock,
+    hass,
+    mock_config_entry,
+    caplog,
+):
+    """A hashed collision merges non-overlapping raw history."""
+    mock_config_entry.add_to_hass(hass)
+    caplog.set_level(logging.WARNING, logger="custom_components.electric_ireland_insights")
+    legacy_id = f"{DOMAIN}:{ACCOUNT}_consumption"
+    hashed_id = f"{DOMAIN}:{mock_config_entry.unique_id}_consumption"
+    raw_start = datetime(2026, 3, 21, tzinfo=UTC)
+    hashed_start = raw_start + timedelta(hours=2)
+
+    async_add_external_statistics(
+        hass,
+        StatisticMetaData(
+            has_sum=True,
+            mean_type=StatisticMeanType.NONE,
+            name=f"Electric Ireland Consumption ({ACCOUNT})",
+            source=DOMAIN,
+            statistic_id=legacy_id,
+            unit_of_measurement="kWh",
+            unit_class="energy",
+        ),
+        [
+            StatisticData(start=raw_start, state=1.0, sum=1.0),
+            StatisticData(start=raw_start + timedelta(hours=1), state=2.0, sum=3.0),
+        ],
+    )
+    async_add_external_statistics(
+        hass,
+        StatisticMetaData(
+            has_sum=True,
+            mean_type=StatisticMeanType.NONE,
+            name=f"Electric Ireland Consumption ({ACCOUNT})",
+            source=DOMAIN,
+            statistic_id=hashed_id,
+            unit_of_measurement="kWh",
+            unit_class="energy",
+        ),
+        [
+            StatisticData(start=hashed_start, state=3.0, sum=3.0),
+            StatisticData(start=hashed_start + timedelta(hours=1), state=4.0, sum=7.0),
+        ],
+    )
+
+    await async_wait_recording_done(hass)
+
+    with (
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI"),
+        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession") as mock_session,
+    ):
+        mock_session.return_value = AsyncMock()
+        from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
+
+        coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
+        await coordinator.async_migrate_legacy_statistics()
+        await coordinator.async_close()
+
+    await async_wait_recording_done(hass)
+
+    metadata = await get_instance(hass).async_add_executor_job(partial(get_metadata, hass, statistic_source=DOMAIN))
+    assert legacy_id not in metadata
+    assert metadata[hashed_id][1]["name"] == f"Electric Ireland Consumption ({mock_config_entry.unique_id})"
+    assert "merged legacy history into hashed data" in caplog.text
+
+    stats = await get_instance(hass).async_add_executor_job(
+        statistics_during_period,
+        hass,
+        raw_start - timedelta(hours=1),
+        hashed_start + timedelta(hours=2),
+        {legacy_id, hashed_id},
+        "hour",
+        None,
+        {"sum", "state"},
+    )
+    assert set(stats) == {hashed_id}
+    assert [row["sum"] for row in stats[hashed_id]] == [1.0, 3.0, 6.0, 10.0]
+
+
+async def test_legacy_statistic_merge_skips_missing_metadata(recorder_mock, hass, mock_config_entry):
+    """Statistic merging is a no-op when metadata was removed concurrently."""
+    mock_config_entry.add_to_hass(hass)
+
+    with (
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI"),
+        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession") as mock_session,
+    ):
+        mock_session.return_value = AsyncMock()
+        from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
+
+        coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
+        await coordinator._async_merge_legacy_statistic(
+            get_instance(hass),
+            old_statistic_id=f"{DOMAIN}:{ACCOUNT}_missing",
+            new_statistic_id=f"{DOMAIN}:{ACCOUNT_HASH}_missing",
+        )
+        await coordinator.async_close()
+
+
+async def test_legacy_statistic_merge_reconciles_rows_without_state(
+    recorder_mock,
+    hass,
+    mock_config_entry,
+):
+    """Merging preserves cumulative deltas across overlapping raw rows."""
+    mock_config_entry.add_to_hass(hass)
+    legacy_id = f"{DOMAIN}:{ACCOUNT}_consumption"
+    hashed_id = f"{DOMAIN}:{mock_config_entry.unique_id}_consumption"
+    start = datetime(2026, 3, 23, tzinfo=UTC)
+
+    async_add_external_statistics(
+        hass,
+        StatisticMetaData(
+            has_sum=True,
+            mean_type=StatisticMeanType.NONE,
+            name=f"Electric Ireland Consumption ({ACCOUNT})",
+            source=DOMAIN,
+            statistic_id=legacy_id,
+            unit_of_measurement="kWh",
+            unit_class="energy",
+        ),
+        [
+            StatisticData(start=start, state=None, sum=1.0),
+            StatisticData(start=start + timedelta(hours=1), state=None, sum=3.0),
+            StatisticData(start=start + timedelta(hours=2), state=None, sum=5.0),
+        ],
+    )
+    async_add_external_statistics(
+        hass,
+        StatisticMetaData(
+            has_sum=True,
+            mean_type=StatisticMeanType.NONE,
+            name=f"Electric Ireland Consumption ({mock_config_entry.unique_id})",
+            source=DOMAIN,
+            statistic_id=hashed_id,
+            unit_of_measurement="kWh",
+            unit_class="energy",
+        ),
+        [
+            StatisticData(start=start + timedelta(hours=1), state=10.0, sum=10.0),
+        ],
+    )
+
+    await async_wait_recording_done(hass)
+
+    with (
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI"),
+        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession") as mock_session,
+    ):
+        mock_session.return_value = AsyncMock()
+        from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
+
+        coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
+        await coordinator.async_migrate_legacy_statistics()
+        await coordinator.async_close()
+
+    await async_wait_recording_done(hass)
+
+    stats = await get_instance(hass).async_add_executor_job(
+        statistics_during_period,
+        hass,
+        start - timedelta(hours=1),
+        start + timedelta(hours=4),
+        {legacy_id, hashed_id},
+        "hour",
+        None,
+        {"sum", "state"},
+    )
+    assert set(stats) == {hashed_id}
+    assert [row["sum"] for row in stats[hashed_id]] == [1.0, 11.0, 13.0]
+
+
+async def test_legacy_external_statistic_collision_keeps_hashed_rows(
+    recorder_mock,
+    hass,
+    mock_config_entry,
+):
+    """A collision with duplicate timestamps keeps the hashed rows."""
+    mock_config_entry.add_to_hass(hass)
+    legacy_id = f"{DOMAIN}:{ACCOUNT}_consumption"
+    hashed_id = f"{DOMAIN}:{mock_config_entry.unique_id}_consumption"
+    start = datetime(2026, 3, 23, tzinfo=UTC)
+
+    for statistic_id, name, total in (
+        (legacy_id, f"Electric Ireland Consumption ({ACCOUNT})", 3.0),
+        (hashed_id, f"Electric Ireland Consumption ({mock_config_entry.unique_id})", 10.0),
+    ):
+        async_add_external_statistics(
+            hass,
+            StatisticMetaData(
+                has_sum=True,
+                mean_type=StatisticMeanType.NONE,
+                name=name,
+                source=DOMAIN,
+                statistic_id=statistic_id,
+                unit_of_measurement="kWh",
+                unit_class="energy",
+            ),
+            [
+                StatisticData(start=start, state=1.0, sum=total - 2.0),
+                StatisticData(start=start + timedelta(hours=1), state=2.0, sum=total),
+            ],
+        )
+
+    await async_wait_recording_done(hass)
+
+    with (
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI"),
+        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession") as mock_session,
+    ):
+        mock_session.return_value = AsyncMock()
+        from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
+
+        coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
+        await coordinator.async_migrate_legacy_statistics()
+        await coordinator.async_close()
+
+    await async_wait_recording_done(hass)
+
+    stats = await get_instance(hass).async_add_executor_job(
+        statistics_during_period,
+        hass,
+        start - timedelta(hours=1),
+        start + timedelta(days=1),
+        {legacy_id, hashed_id},
+        "hour",
+        None,
+        {"sum", "state"},
+    )
+    assert set(stats) == {hashed_id}
+    assert [row["sum"] for row in stats[hashed_id]] == [8.0, 10.0]
+
+
+async def test_legacy_external_statistics_update_energy_dashboard_references(
+    recorder_mock,
+    hass,
+    mock_config_entry,
+):
+    """Hashing external statistics retargets Energy Dashboard preferences and retries failures."""
+    mock_config_entry.add_to_hass(hass)
+    legacy_consumption_id = f"{DOMAIN}:{ACCOUNT}_consumption"
+    legacy_cost_id = f"{DOMAIN}:{ACCOUNT}_cost"
+    hashed_consumption_id = f"{DOMAIN}:{mock_config_entry.unique_id}_consumption"
+    hashed_cost_id = f"{DOMAIN}:{mock_config_entry.unique_id}_cost"
+    start = datetime(2026, 3, 23, tzinfo=UTC)
+
+    manager = await async_get_manager(hass)
+    await manager.async_update(
+        {
+            "energy_sources": [
+                {
+                    "type": "grid",
+                    "flow_from": [
+                        {
+                            "stat_energy_from": legacy_consumption_id,
+                            "stat_cost": legacy_cost_id,
+                            "entity_energy_price": None,
+                            "number_energy_price": None,
+                        }
+                    ],
+                    "flow_to": [
+                        {
+                            "stat_energy_to": legacy_consumption_id,
+                            "stat_compensation": legacy_cost_id,
+                            "entity_energy_price": None,
+                            "number_energy_price": None,
+                        }
+                    ],
+                    "cost_adjustment_day": 0.0,
+                }
+            ],
+            "device_consumption": [
+                {
+                    "stat_consumption": legacy_consumption_id,
+                    "name": "Main meter",
+                    "included_in_stat": legacy_cost_id,
+                }
+            ],
+            "device_consumption_water": [{"stat_consumption": legacy_consumption_id, "name": None}],
+        }
+    )
+
+    for statistic_id, unit, unit_class in (
+        (legacy_consumption_id, "kWh", "energy"),
+        (legacy_cost_id, "EUR", None),
+    ):
+        async_add_external_statistics(
+            hass,
+            StatisticMetaData(
+                has_sum=True,
+                mean_type=StatisticMeanType.NONE,
+                name=f"Electric Ireland ({ACCOUNT})",
+                source=DOMAIN,
+                statistic_id=statistic_id,
+                unit_of_measurement=unit,
+                unit_class=unit_class,
+            ),
+            [StatisticData(start=start, state=1.0, sum=1.0)],
+        )
+
+    await async_wait_recording_done(hass)
+
+    original_async_update = manager.async_update
+    update_attempts = 0
+
+    async def update_preferences(preferences):
+        nonlocal update_attempts
+        update_attempts += 1
+        if update_attempts == 1:
+            raise RuntimeError("dashboard update failed")
+        await original_async_update(preferences)
+
+    with (
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI"),
+        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession") as mock_session,
+        patch.object(manager, "async_update", side_effect=update_preferences),
+    ):
+        mock_session.return_value = AsyncMock()
+        from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
+
+        coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
+        with pytest.raises(RuntimeError, match="dashboard update failed"):
+            await coordinator.async_migrate_legacy_statistics()
+        await coordinator.async_migrate_legacy_statistics()
+        await coordinator._async_migrate_energy_preferences(
+            {
+                legacy_consumption_id: hashed_consumption_id,
+                legacy_cost_id: hashed_cost_id,
+            }
+        )
+        await coordinator.async_close()
+
+    assert update_attempts == 2
+
+    assert manager.data is not None
+    source = manager.data["energy_sources"][0]
+    assert source["flow_from"][0]["stat_energy_from"] == hashed_consumption_id
+    assert source["flow_from"][0]["stat_cost"] == hashed_cost_id
+    assert source["flow_to"][0]["stat_energy_to"] == hashed_consumption_id
+    assert source["flow_to"][0]["stat_compensation"] == hashed_cost_id
+    assert manager.data["device_consumption"][0]["stat_consumption"] == hashed_consumption_id
+    assert manager.data["device_consumption"][0]["included_in_stat"] == hashed_cost_id
+    assert manager.data["device_consumption_water"][0]["stat_consumption"] == hashed_consumption_id
+
+
+async def test_legacy_data_discount_prevents_statistics_cleanup(recorder_mock, hass, mock_config_entry):
+    """A legacy nonzero discount prevents destructive cleanup."""
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        data={**mock_config_entry.data, "discount_percentage": 20},
+        options={},
+    )
+
+    with (
+        patch(
+            "custom_components.electric_ireland_insights.coordinator.get_metadata",
+        ) as mock_get_metadata,
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI"),
+        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
+    ):
+        from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
+
+        coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
+        await coordinator.async_clear_discounted_statistics()
+    mock_get_metadata.assert_not_called()
 
 
 async def test_cost_discounted_statistic_full_discount(recorder_mock, hass, mock_config_entry):
@@ -1074,8 +1614,7 @@ async def test_sum_continuity_across_runs(recorder_mock, hass, mock_config_entry
         coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
         await coordinator._async_update_data()
 
-        await get_instance(hass).async_add_executor_job(lambda: None)
-        await hass.async_block_till_done()
+        await async_wait_recording_done(hass)
 
         mock_get_last.return_value = {STAT_ID_CONSUMPTION: [{"sum": first_run_total}]}
         _setup_api_mock(
@@ -1085,8 +1624,7 @@ async def test_sum_continuity_across_runs(recorder_mock, hass, mock_config_entry
 
         await coordinator._async_update_data()
 
-        await get_instance(hass).async_add_executor_job(lambda: None)
-        await hass.async_block_till_done()
+        await async_wait_recording_done(hass)
 
     start = datetime(2026, 3, 23, 0, 0, tzinfo=UTC)
     end = datetime(2026, 4, 6, 0, 0, tzinfo=UTC)
@@ -1141,8 +1679,7 @@ async def test_sum_continuity_across_runs_with_long_gap(recorder_mock, hass, moc
         coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
         await coordinator._async_update_data()
 
-        await get_instance(hass).async_add_executor_job(lambda: None)
-        await hass.async_block_till_done()
+        await async_wait_recording_done(hass)
 
         mock_get_last.return_value = {STAT_ID_CONSUMPTION: [{"sum": first_run_total}]}
         _setup_api_mock(
@@ -1152,8 +1689,7 @@ async def test_sum_continuity_across_runs_with_long_gap(recorder_mock, hass, moc
 
         await coordinator._async_update_data()
 
-        await get_instance(hass).async_add_executor_job(lambda: None)
-        await hass.async_block_till_done()
+        await async_wait_recording_done(hass)
 
     start = datetime(2026, 3, 23, 0, 0, tzinfo=UTC)
     end = datetime(2026, 5, 3, 0, 0, tzinfo=UTC)
@@ -1218,8 +1754,7 @@ async def test_dst_spring_forward_imports_23_hours(recorder_mock, hass, mock_con
         coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
         await coordinator._async_update_data()
 
-        await get_instance(hass).async_add_executor_job(lambda: None)
-        await hass.async_block_till_done()
+        await async_wait_recording_done(hass)
 
     start = datetime(2026, 3, 29, 0, 0, tzinfo=UTC)
     end = datetime(2026, 3, 30, 0, 0, tzinfo=UTC)
@@ -1292,8 +1827,7 @@ async def test_dst_fall_back_imports_25_hours(recorder_mock, hass, mock_config_e
         coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
         await coordinator._async_update_data()
 
-        await get_instance(hass).async_add_executor_job(lambda: None)
-        await hass.async_block_till_done()
+        await async_wait_recording_done(hass)
 
     start = datetime(2026, 10, 24, 0, 0, tzinfo=UTC)
     end = datetime(2026, 10, 26, 0, 0, tzinfo=UTC)
@@ -3627,3 +4161,219 @@ async def test_none_value_datapoints_produce_no_statistics(recorder_mock, hass, 
 
     assert STAT_ID_CONSUMPTION not in stats or len(stats[STAT_ID_CONSUMPTION]) == 0
     assert STAT_ID_COST not in stats or len(stats[STAT_ID_COST]) == 0
+
+
+async def test_backfill_releases_provider_lock_between_requests(recorder_mock, hass, mock_config_entry):
+    """Backfill releases the provider lock between provider requests."""
+    mock_config_entry.add_to_hass(hass)
+
+    with (
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI") as mock_api_class,
+        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
+        patch(
+            "custom_components.electric_ireland_insights.coordinator.dt_now",
+            return_value=datetime(2026, 3, 25, tzinfo=UTC),
+        ),
+    ):
+        api = AsyncMock()
+        mock_api_class.return_value = api
+        api.authenticate = AsyncMock(return_value=(TEST_METER_IDS, None))
+        api.get_bill_periods = AsyncMock(
+            return_value=[
+                {"startDate": "2026-03-23", "endDate": "2026-03-24"},
+            ]
+        )
+        api.get_hourly_usage = AsyncMock(return_value=[])
+
+        from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
+
+        coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
+        lock = _CountingLock()
+        coordinator._api_lock = lock
+
+        await coordinator.async_tariff_backfill(full_history=True)
+        await hass.async_block_till_done()
+        await async_wait_recording_done(hass)
+        await coordinator.async_close()
+
+    assert lock.enter_count == 4
+    assert api.get_hourly_usage.await_count == 2
+
+
+async def test_foreground_releases_provider_lock_between_requests(recorder_mock, hass, mock_config_entry):
+    """Foreground refresh releases the provider lock between provider requests."""
+    mock_config_entry.add_to_hass(hass)
+
+    with (
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI") as mock_api_class,
+        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
+        patch(
+            "custom_components.electric_ireland_insights.coordinator.dt_now",
+            return_value=datetime(2026, 3, 25, tzinfo=UTC),
+        ),
+    ):
+        api = AsyncMock()
+        mock_api_class.return_value = api
+        api.authenticate = AsyncMock(return_value=(TEST_METER_IDS, None))
+        api.get_bill_periods = AsyncMock(return_value=[])
+        api.get_hourly_usage = AsyncMock(return_value=[])
+
+        from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
+
+        coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
+        lock = _CountingLock()
+        coordinator._api_lock = lock
+
+        await coordinator._async_update_data()
+        await hass.async_block_till_done()
+        await async_wait_recording_done(hass)
+        await coordinator.async_close()
+
+    assert lock.enter_count == 2 + LOOKUP_DAYS
+    assert api.get_hourly_usage.await_count == LOOKUP_DAYS
+
+
+async def test_foreground_interleaves_between_backfill_requests(recorder_mock, hass, mock_config_entry):
+    """Foreground provider calls can run between backfill requests."""
+    mock_config_entry.add_to_hass(hass)
+    second_entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "username": "second@test.com",
+            "password": "testpass",
+            "account_number": "100000002",
+        },
+        unique_id="second-account",
+    )
+    second_entry.add_to_hass(hass)
+    call_order: list[str] = []
+
+    with (
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI") as mock_api_class,
+        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
+        patch(
+            "custom_components.electric_ireland_insights.coordinator.get_last_statistics",
+            return_value={},
+        ),
+        patch(
+            "custom_components.electric_ireland_insights.coordinator.dt_now",
+            return_value=datetime(2026, 3, 25, tzinfo=UTC),
+        ),
+    ):
+        first_api = AsyncMock()
+        second_api = AsyncMock()
+        mock_api_class.side_effect = [first_api, second_api]
+
+        async def first_authenticate(*_args: object) -> tuple[dict[str, str], None]:
+            call_order.append("backfill:authenticate")
+            return TEST_METER_IDS, None
+
+        async def first_bill_periods(*_args: object) -> list[dict[str, str]]:
+            call_order.append("backfill:bill_periods")
+            return [{"startDate": "2026-03-23", "endDate": "2026-03-24"}]
+
+        async def first_hourly_usage(
+            _session: object, _meter_ids: object, target_date: date
+        ) -> list[dict[str, object]]:
+            call_order.append(f"backfill:{target_date.day}")
+            return []
+
+        async def second_authenticate(*_args: object) -> tuple[dict[str, str], None]:
+            call_order.append("foreground:authenticate")
+            return TEST_METER_IDS, None
+
+        async def second_bill_periods(*_args: object) -> list[dict[str, str]]:
+            call_order.append("foreground:bill_periods")
+            return []
+
+        async def second_hourly_usage(
+            _session: object, _meter_ids: object, target_date: date
+        ) -> list[dict[str, object]]:
+            call_order.append(f"foreground:{target_date.day}")
+            return []
+
+        first_api.authenticate = AsyncMock(side_effect=first_authenticate)
+        first_api.get_bill_periods = AsyncMock(side_effect=first_bill_periods)
+        first_api.get_hourly_usage = AsyncMock(side_effect=first_hourly_usage)
+        second_api.authenticate = AsyncMock(side_effect=second_authenticate)
+        second_api.get_bill_periods = AsyncMock(side_effect=second_bill_periods)
+        second_api.get_hourly_usage = AsyncMock(side_effect=second_hourly_usage)
+
+        from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
+
+        first_coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
+        second_coordinator = ElectricIrelandCoordinator(hass, second_entry)
+
+        async def run_foreground() -> None:
+            await second_coordinator._async_update_data()
+
+        lock = _InterleavingLock(run_foreground)
+        first_coordinator._api_lock = lock
+        second_coordinator._api_lock = lock
+
+        await first_coordinator.async_tariff_backfill(full_history=True)
+        await hass.async_block_till_done()
+        await async_wait_recording_done(hass)
+        await first_coordinator.async_close()
+        await second_coordinator.async_close()
+
+    day_23_index = call_order.index("backfill:23")
+    day_24_index = call_order.index("backfill:24")
+    foreground_auth_index = call_order.index("foreground:authenticate")
+    assert day_23_index < foreground_auth_index < day_24_index
+    assert second_api.get_hourly_usage.await_count == LOOKUP_DAYS
+
+
+async def test_zero_discount_clears_existing_discounted_statistics(
+    recorder_mock,
+    hass,
+    mock_config_entry,
+):
+    """A zero discount removes only this account's discounted statistics."""
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(mock_config_entry, options={"discount_percentage": 0})
+    other_account_stat = f"{DOMAIN}:other_cost_discounted"
+    legacy_account_stat = f"{DOMAIN}:{ACCOUNT}_cost_discounted"
+    tariff_stat = f"{DOMAIN}:{ACCOUNT_HASH}_cost_off_peak_discounted"
+    start = datetime(2026, 3, 23, tzinfo=UTC)
+    statistics_to_seed = (
+        (STAT_ID_COST_DISCOUNTED, "Electric Ireland Cost Discounted"),
+        (legacy_account_stat, f"Electric Ireland Cost Discounted ({ACCOUNT})"),
+        (tariff_stat, "Electric Ireland Cost Off-Peak Discounted"),
+        (STAT_ID_COST, "Electric Ireland Cost"),
+        (other_account_stat, "Other Cost Discounted"),
+    )
+
+    for statistic_id, name in statistics_to_seed:
+        async_add_external_statistics(
+            hass,
+            StatisticMetaData(
+                has_sum=True,
+                mean_type=StatisticMeanType.NONE,
+                name=name,
+                source=DOMAIN,
+                statistic_id=statistic_id,
+                unit_of_measurement="EUR",
+                unit_class=None,
+            ),
+            [StatisticData(start=start, state=1.0, sum=1.0)],
+        )
+    await async_wait_recording_done(hass)
+
+    with (
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI"),
+        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession") as mock_session,
+    ):
+        mock_session.return_value = AsyncMock()
+        from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
+
+        coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
+        await coordinator.async_clear_discounted_statistics()
+        await coordinator.async_close()
+
+    await async_wait_recording_done(hass)
+
+    metadata = await get_instance(hass).async_add_executor_job(partial(get_metadata, hass, statistic_source=DOMAIN))
+    removed_ids = {STAT_ID_COST_DISCOUNTED, legacy_account_stat, tariff_stat}
+    assert not removed_ids & metadata.keys()
+    assert {STAT_ID_COST, other_account_stat} <= metadata.keys()

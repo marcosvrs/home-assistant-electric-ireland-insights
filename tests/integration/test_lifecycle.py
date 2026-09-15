@@ -344,16 +344,16 @@ async def test_coordinator_populates_data_structure(
 
 
 # ===================================================================
-# Version 1 direct setup
+# Version migration before setup
 # ===================================================================
 
 
-async def test_version_one_entry_loads_directly(
+async def test_version_one_entry_migrates_before_setup(
     recorder_mock,
     hass: HomeAssistant,
     enable_custom_integrations,
 ) -> None:
-    """Version 1 entry with no cached IDs discovers IDs during setup."""
+    """Version 1 entries migrate to version 2 before setup."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={
@@ -372,7 +372,7 @@ async def test_version_one_entry_loads_directly(
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-    assert entry.version == 1
+    assert entry.version == 2
     assert entry.state == ConfigEntryState.LOADED
     assert entry.data["partner_id"] == PARTNER
 

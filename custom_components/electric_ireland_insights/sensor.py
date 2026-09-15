@@ -95,6 +95,7 @@ class ElectricIrelandDiagnosticSensor(CoordinatorEntity[ElectricIrelandCoordinat
         super().__init__(coordinator)
         self.entity_description = description
         self._attr_unique_id = f"{DOMAIN}_{account_hash}_{description.key}"
+        self.entity_id = f"sensor.{DOMAIN}_{account_hash}_{description.key}"
         self._attr_entity_registry_enabled_default = False
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, account_hash)},

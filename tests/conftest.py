@@ -1,21 +1,40 @@
 # pyright: reportMissingImports=false
 
+import importlib
+from typing import Protocol, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+
 
 # Disable pycares' global _run_safe_shutdown_loop daemon thread.
 # pycares 5.x spawns a permanent daemon thread when any Channel is destroyed.
 # pytest-homeassistant-custom-component >=0.13.316 whitelists this thread in
 # verify_cleanup, but 0.13.205 (used on Python 3.12 CI) does not.
 # Tests never resolve real DNS, so the shutdown manager is unnecessary.
-try:
-    from pycares import _ChannelShutdownManager  # type: ignore[attr-defined]
+class _ChannelShutdownManager(Protocol):
+    def start(self) -> None:
+        """Start the shutdown worker."""
 
-    _ChannelShutdownManager.start = lambda self: None  # type: ignore[method-assign]
-except (ImportError, AttributeError):
-    pass
+
+def _disable_shutdown_manager_start(self: _ChannelShutdownManager) -> None:
+    """Prevent pycares from starting its daemon shutdown worker."""
+
+
+def _disable_pycares_shutdown_manager() -> None:
+    try:
+        pycares = importlib.import_module("pycares")
+    except ImportError:
+        return
+
+    manager = getattr(pycares, "_ChannelShutdownManager", None)
+    if manager is not None:
+        manager_type = cast("type[_ChannelShutdownManager]", manager)
+        manager_type.start = _disable_shutdown_manager_start
+
+
+_disable_pycares_shutdown_manager()
 
 
 SAMPLE_DATAPOINTS = [
@@ -85,3 +104,9 @@ def mock_setup_entry():
         new=AsyncMock(return_value=True),
     ) as setup_mock:
         yield setup_mock
+
+
+@pytest.fixture(autouse=True)
+def persistent_database() -> bool:
+    """Use a file-backed recorder database to avoid in-memory shutdown races."""
+    return True
