@@ -15,6 +15,7 @@ from homeassistant.helpers.entity_registry import (
 from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
 from homeassistant.helpers.issue_registry import IssueSeverity, async_create_issue
 from homeassistant.helpers.issue_registry import async_get as async_get_issue_registry
+from homeassistant.helpers.translation import async_get_translations
 from pytest_homeassistant_custom_component.components.recorder.common import async_wait_recording_done
 
 from custom_components.electric_ireland_insights import (
@@ -415,6 +416,7 @@ async def test_legacy_config_entry_identity_removal_exception_restores_registry_
 
 async def test_setup_entry_stops_on_legacy_config_identity_collision(
     hass,
+    enable_custom_integrations,
     mock_config_entry,
     caplog,
 ):
@@ -434,12 +436,17 @@ async def test_setup_entry_stops_on_legacy_config_identity_collision(
         unique_id=ACCOUNT_HASH,
     )
     other_entry.add_to_hass(hass)
-    caplog.set_level(logging.WARNING, logger="custom_components.electric_ireland_insights")
+    hass.config.components.add(DOMAIN)
+    translations = await async_get_translations(hass, "en", "exceptions", {DOMAIN})
+    assert "component.electric_ireland_insights.exceptions.identity_collision.message" in translations
 
     with pytest.raises(ConfigEntryError) as error:
         await async_setup_entry(hass, mock_config_entry)
     assert error.value.translation_domain == DOMAIN
     assert error.value.translation_key == "identity_collision"
+    assert str(error.value) == (
+        "This account cannot be set up because its privacy-safe ID is already in use by another account"
+    )
 
     assert mock_config_entry.unique_id == account
     assert mock_config_entry.title == f"{NAME} ({ACCOUNT_HASH}) - Main meter"
