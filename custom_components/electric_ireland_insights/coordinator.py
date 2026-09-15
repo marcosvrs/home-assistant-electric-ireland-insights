@@ -279,25 +279,28 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                 old_only_rows = [row for row in old_rows if row.start_ts not in new_start_ts]
 
                 if old_only_rows:
+                    sum_deltas: dict[bool, dict[float | None, float]] = {
+                        True: {},
+                        False: {},
+                    }
+                    for is_old, rows in ((True, old_rows), (False, new_rows)):
+                        previous_sum: float | None = None
+                        for row in rows:
+                            if row.sum is not None:
+                                if previous_sum is not None:
+                                    sum_deltas[is_old][row.start_ts] = row.sum - previous_sum
+                                previous_sum = row.sum
+
                     merged_rows = [(row, True) for row in old_only_rows] + [(row, False) for row in new_rows]
                     merged_rows.sort(key=lambda item: item[0].start_ts or 0)
                     running_sum = merged_rows[0][0].sum or 0.0
-                    last_original_sum: dict[bool, float | None] = {
-                        True: None,
-                        False: None,
-                    }
                     for index, (row, is_old) in enumerate(merged_rows):
-                        original_sum = row.sum
                         if index:
                             if row.state is not None:
                                 running_sum += row.state
-                            else:
-                                previous_original_sum = last_original_sum[is_old]
-                                if original_sum is not None and previous_original_sum is not None:
-                                    running_sum += original_sum - previous_original_sum
+                            elif row.sum is not None:
+                                running_sum += sum_deltas[is_old].get(row.start_ts, 0.0)
                         row.sum = running_sum
-                        last_original_sum[is_old] = original_sum
-
                     for row in old_only_rows:
                         row.metadata_id = new_metadata_id
                     session.flush()

@@ -8,6 +8,7 @@ import homeassistant.helpers.config_validation as cv
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryError
 from homeassistant.helpers.device_registry import (
     DeviceEntry,
     DeviceRegistry,
@@ -155,13 +156,13 @@ def _merge_duplicate_config_entry_state(
 async def _migrate_legacy_config_entry_identity(
     hass: HomeAssistant,
     entry: ElectricIrelandConfigEntry,
-) -> None:
+) -> bool:
     """Migrate raw config-entry identity to privacy-safe values."""
     account = entry.data["account_number"]
     account_hash = hash_account_id(account)
     new_title = entry.title.replace(account, account_hash)
     new_unique_id = entry.unique_id
-
+    identity_collision = False
     if entry.unique_id == account:
         duplicate_entry = next(
             (
@@ -206,9 +207,10 @@ async def _migrate_legacy_config_entry_identity(
                 _LOGGER.warning("Could not remove duplicate Electric Ireland config entry")
         else:
             _LOGGER.warning("Could not migrate legacy config entry identity: privacy-safe ID is already in use")
+            identity_collision = True
 
     if new_title == entry.title and new_unique_id == entry.unique_id:
-        return
+        return not identity_collision
 
     hass.config_entries.async_update_entry(
         entry,
@@ -216,6 +218,7 @@ async def _migrate_legacy_config_entry_identity(
         unique_id=new_unique_id,
     )
     _LOGGER.info("Migrated legacy config entry identity")
+    return not identity_collision
 
 
 def _merge_device_registry_customizations(
@@ -379,7 +382,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ElectricIrelandConfigEnt
         "Setting up Electric Ireland entry, account=%s",
         _redact_id(entry.data["account_number"]),
     )
-    await _migrate_legacy_config_entry_identity(hass, entry)
+    if not await _migrate_legacy_config_entry_identity(hass, entry):
+        raise ConfigEntryError(
+            "Cannot set up because this account's privacy-safe ID is already in use by another account"
+        )
     _migrate_legacy_repair_issues(hass, entry)
     _migrate_legacy_discount_to_options(hass, entry)
     _migrate_legacy_device(hass, entry)

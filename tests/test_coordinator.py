@@ -1095,7 +1095,7 @@ async def test_legacy_statistic_merge_reconciles_rows_without_state(
     hass,
     mock_config_entry,
 ):
-    """Merging preserves cumulative deltas when historical states are absent."""
+    """Merging preserves cumulative deltas across overlapping raw rows."""
     mock_config_entry.add_to_hass(hass)
     legacy_id = f"{DOMAIN}:{ACCOUNT}_consumption"
     hashed_id = f"{DOMAIN}:{mock_config_entry.unique_id}_consumption"
@@ -1130,7 +1130,7 @@ async def test_legacy_statistic_merge_reconciles_rows_without_state(
             unit_class="energy",
         ),
         [
-            StatisticData(start=start + timedelta(hours=3), state=1.0, sum=1.0),
+            StatisticData(start=start + timedelta(hours=1), state=10.0, sum=10.0),
         ],
     )
 
@@ -1160,7 +1160,7 @@ async def test_legacy_statistic_merge_reconciles_rows_without_state(
         {"sum", "state"},
     )
     assert set(stats) == {hashed_id}
-    assert [row["sum"] for row in stats[hashed_id]] == [1.0, 3.0, 5.0, 6.0]
+    assert [row["sum"] for row in stats[hashed_id]] == [1.0, 11.0, 13.0]
 
 
 async def test_legacy_external_statistic_collision_keeps_hashed_rows(

@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant.config_entries import ConfigEntryState
+from homeassistant.exceptions import ConfigEntryError
 from homeassistant.helpers.device_registry import DeviceEntryDisabler
 from homeassistant.helpers.device_registry import async_get as async_get_device_registry
 from homeassistant.helpers.entity_registry import (
@@ -23,6 +24,7 @@ from custom_components.electric_ireland_insights import (
     _migrate_legacy_entity_ids,
     _migrate_legacy_repair_issues,
     async_migrate_entry,
+    async_setup_entry,
 )
 from custom_components.electric_ireland_insights.const import CONF_DISCOUNT_PERCENTAGE, DOMAIN, NAME, hash_account_id
 
@@ -411,12 +413,12 @@ async def test_legacy_config_entry_identity_removal_exception_restores_registry_
     assert retained_entity.name == "Custom import time"
 
 
-async def test_legacy_config_entry_identity_collision_with_other_account_is_preserved(
+async def test_setup_entry_stops_on_legacy_config_identity_collision(
     hass,
     mock_config_entry,
     caplog,
 ):
-    """A privacy-safe ID owned by another account remains untouched."""
+    """A privacy-safe ID owned by another account blocks setup."""
     from pytest_homeassistant_custom_component.common import MockConfigEntry
 
     mock_config_entry.add_to_hass(hass)
@@ -434,7 +436,8 @@ async def test_legacy_config_entry_identity_collision_with_other_account_is_pres
     other_entry.add_to_hass(hass)
     caplog.set_level(logging.WARNING, logger="custom_components.electric_ireland_insights")
 
-    await _migrate_legacy_config_entry_identity(hass, mock_config_entry)
+    with pytest.raises(ConfigEntryError, match="already in use by another account"):
+        await async_setup_entry(hass, mock_config_entry)
 
     assert mock_config_entry.unique_id == account
     assert mock_config_entry.title == f"{NAME} ({ACCOUNT_HASH}) - Main meter"
