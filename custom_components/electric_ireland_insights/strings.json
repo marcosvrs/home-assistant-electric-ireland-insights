@@ -112,7 +112,7 @@
   },
   "exceptions": {
     "identity_collision": {
-      "message": "This account cannot be set up because its privacy-safe ID is already in use by another account"
+      "message": "This account cannot be set up because its privacy-safe ID is unavailable due to another config entry. Resolve the conflict and retry"
     }
   }
 }

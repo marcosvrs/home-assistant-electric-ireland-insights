@@ -205,6 +205,7 @@ async def _migrate_legacy_config_entry_identity(
                     moved_entity_ids,
                 )
                 _LOGGER.warning("Could not remove duplicate Electric Ireland config entry")
+                identity_collision = True
         else:
             _LOGGER.warning("Could not migrate legacy config entry identity: privacy-safe ID is already in use")
             identity_collision = True

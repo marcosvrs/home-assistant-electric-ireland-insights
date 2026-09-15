@@ -311,13 +311,16 @@ async def test_legacy_config_entry_identity_removal_failure_keeps_raw_id(
     )
     caplog.set_level(logging.WARNING, logger="custom_components.electric_ireland_insights")
 
-    with patch.object(
-        hass.config_entries,
-        "async_remove",
-        new_callable=AsyncMock,
-        return_value={"require_restart": True},
+    with (
+        patch.object(
+            hass.config_entries,
+            "async_remove",
+            new_callable=AsyncMock,
+            return_value={"require_restart": True},
+        ),
+        pytest.raises(ConfigEntryError),
     ):
-        await _migrate_legacy_config_entry_identity(hass, mock_config_entry)
+        await async_setup_entry(hass, mock_config_entry)
 
     assert mock_config_entry.unique_id == account
     assert mock_config_entry.title == f"{NAME} ({ACCOUNT_HASH}) - Main meter"
@@ -445,7 +448,8 @@ async def test_setup_entry_stops_on_legacy_config_identity_collision(
     assert error.value.translation_domain == DOMAIN
     assert error.value.translation_key == "identity_collision"
     assert str(error.value) == (
-        "This account cannot be set up because its privacy-safe ID is already in use by another account"
+        "This account cannot be set up because its privacy-safe ID is unavailable "
+        "due to another config entry. Resolve the conflict and retry"
     )
 
     assert mock_config_entry.unique_id == account
