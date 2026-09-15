@@ -57,7 +57,8 @@
     "error": {
       "invalid_auth": "Invalid username or password",
       "cannot_connect": "Unable to connect to the Electric Ireland portal. Please check your internet connection.",
-      "account_not_found": "No electricity accounts found for this user."
+      "account_not_found": "No electricity accounts found for this user.",
+      "identity_collision": "This account cannot be set up because its privacy-safe ID is already in use by another account."
     },
     "abort": {
       "already_configured": "This account is already configured",

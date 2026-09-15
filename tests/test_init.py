@@ -436,8 +436,10 @@ async def test_setup_entry_stops_on_legacy_config_identity_collision(
     other_entry.add_to_hass(hass)
     caplog.set_level(logging.WARNING, logger="custom_components.electric_ireland_insights")
 
-    with pytest.raises(ConfigEntryError, match="already in use by another account"):
+    with pytest.raises(ConfigEntryError) as error:
         await async_setup_entry(hass, mock_config_entry)
+    assert error.value.translation_domain == DOMAIN
+    assert error.value.translation_key == "identity_collision"
 
     assert mock_config_entry.unique_id == account
     assert mock_config_entry.title == f"{NAME} ({ACCOUNT_HASH}) - Main meter"

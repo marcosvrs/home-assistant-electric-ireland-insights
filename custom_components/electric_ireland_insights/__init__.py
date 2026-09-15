@@ -384,7 +384,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ElectricIrelandConfigEnt
     )
     if not await _migrate_legacy_config_entry_identity(hass, entry):
         raise ConfigEntryError(
-            "Cannot set up because this account's privacy-safe ID is already in use by another account"
+            translation_domain=DOMAIN,
+            translation_key="identity_collision",
         )
     _migrate_legacy_repair_issues(hass, entry)
     _migrate_legacy_discount_to_options(hass, entry)
