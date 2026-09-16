@@ -287,7 +287,9 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
                         previous_sum: float | None = None
                         for row in rows:
                             if row.sum is not None:
-                                if previous_sum is not None:
+                                if previous_sum is None:
+                                    sum_deltas[is_old][row.start_ts] = row.sum
+                                else:
                                     sum_deltas[is_old][row.start_ts] = row.sum - previous_sum
                                 previous_sum = row.sum
 

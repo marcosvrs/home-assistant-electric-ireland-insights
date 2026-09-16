@@ -172,8 +172,8 @@ async def test_hashed_config_entry_title_is_migrated(hass, mock_config_entry):
     assert mock_config_entry.title == f"{NAME} ({ACCOUNT_HASH}) - Main meter"
 
 
-async def test_legacy_config_entry_identity_duplicate_is_removed(hass, mock_config_entry):
-    """A same-account hashed duplicate is removed before migration."""
+async def test_legacy_config_entry_identity_duplicate_requires_restart(hass, mock_config_entry):
+    """A duplicate requiring restart blocks identity migration."""
     from pytest_homeassistant_custom_component.common import MockConfigEntry
 
     mock_config_entry.add_to_hass(hass)
@@ -190,7 +190,21 @@ async def test_legacy_config_entry_identity_duplicate_is_removed(hass, mock_conf
     )
     hashed_entry.add_to_hass(hass)
 
-    await _migrate_legacy_config_entry_identity(hass, mock_config_entry)
+    remove_entry = hass.config_entries.async_remove
+
+    async def remove_and_require_restart(entry_id):
+        await remove_entry(entry_id)
+        return {"require_restart": True}
+
+    with (
+        patch.object(
+            hass.config_entries,
+            "async_remove",
+            side_effect=remove_and_require_restart,
+        ),
+        pytest.raises(ConfigEntryError),
+    ):
+        await async_setup_entry(hass, mock_config_entry)
 
     assert mock_config_entry.unique_id == ACCOUNT_HASH
     assert mock_config_entry.title == f"{NAME} ({ACCOUNT_HASH}) - Main meter"
@@ -448,8 +462,8 @@ async def test_setup_entry_stops_on_legacy_config_identity_collision(
     assert error.value.translation_domain == DOMAIN
     assert error.value.translation_key == "identity_collision"
     assert str(error.value) == (
-        "This account cannot be set up because its privacy-safe ID is unavailable "
-        "due to another config entry. Resolve the conflict and retry"
+        "This account cannot be set up because its privacy-safe identity is currently unavailable. "
+        "Resolve the duplicate configuration or restart Home Assistant, then retry"
     )
 
     assert mock_config_entry.unique_id == account

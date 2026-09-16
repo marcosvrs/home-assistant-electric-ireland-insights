@@ -112,7 +112,7 @@
   },
   "exceptions": {
     "identity_collision": {
-      "message": "This account cannot be set up because its privacy-safe ID is unavailable due to another config entry. Resolve the conflict and retry"
+      "message": "This account cannot be set up because its privacy-safe identity is currently unavailable. Resolve the duplicate configuration or restart Home Assistant, then retry"
     }
   }
 }

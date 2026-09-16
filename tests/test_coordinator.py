@@ -1130,7 +1130,8 @@ async def test_legacy_statistic_merge_reconciles_rows_without_state(
             unit_class="energy",
         ),
         [
-            StatisticData(start=start + timedelta(hours=1), state=10.0, sum=10.0),
+            StatisticData(start=start + timedelta(hours=1), state=None, sum=10.0),
+            StatisticData(start=start + timedelta(hours=2), state=None, sum=12.0),
         ],
     )
 

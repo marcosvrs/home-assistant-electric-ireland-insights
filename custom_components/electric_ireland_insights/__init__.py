@@ -194,6 +194,7 @@ async def _migrate_legacy_config_entry_identity(
             if hass.config_entries.async_get_entry(duplicate_entry.entry_id) is None:
                 if removal["require_restart"]:
                     _LOGGER.warning("Removed duplicate Electric Ireland config entry; restart required")
+                    identity_collision = True
                 _merge_duplicate_config_entry_state(hass, entry, duplicate_entry)
                 new_unique_id = account_hash
             else:
