@@ -25,9 +25,16 @@ from custom_components.electric_ireland_insights import (
     _migrate_legacy_entity_ids,
     _migrate_legacy_repair_issues,
     async_migrate_entry,
+    async_setup,
     async_setup_entry,
 )
-from custom_components.electric_ireland_insights.const import CONF_DISCOUNT_PERCENTAGE, DOMAIN, NAME, hash_account_id
+from custom_components.electric_ireland_insights.const import (
+    _IDENTITY_MIGRATION_RESTART_REQUIRED,
+    CONF_DISCOUNT_PERCENTAGE,
+    DOMAIN,
+    NAME,
+    hash_account_id,
+)
 
 TEST_METER_IDS = {"partner": "P1", "contract": "C1", "premise": "PR1"}
 ACCOUNT_HASH = hash_account_id("100000001")
@@ -156,6 +163,22 @@ async def test_legacy_config_entry_identity_is_migrated(hass, mock_config_entry)
     assert mock_config_entry.title == f"{NAME} ({ACCOUNT_HASH}) - Main meter"
 
 
+async def test_legacy_config_entry_identity_without_unique_id_is_migrated(hass, mock_config_entry):
+    """An entry without a unique ID becomes privacy-safe."""
+    mock_config_entry.add_to_hass(hass)
+    account = mock_config_entry.data["account_number"]
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        title=f"{NAME} ({account}) - Main meter",
+        unique_id=None,
+    )
+
+    await _migrate_legacy_config_entry_identity(hass, mock_config_entry)
+
+    assert mock_config_entry.unique_id == ACCOUNT_HASH
+    assert mock_config_entry.title == f"{NAME} ({ACCOUNT_HASH}) - Main meter"
+
+
 async def test_hashed_config_entry_title_is_migrated(hass, mock_config_entry):
     """A raw account title is migrated when the ID is already hashed."""
     mock_config_entry.add_to_hass(hass)
@@ -209,6 +232,23 @@ async def test_legacy_config_entry_identity_duplicate_requires_restart(hass, moc
     assert mock_config_entry.unique_id == ACCOUNT_HASH
     assert mock_config_entry.title == f"{NAME} ({ACCOUNT_HASH}) - Main meter"
     assert hass.config_entries.async_get_entry(hashed_entry.entry_id) is None
+    with pytest.raises(ConfigEntryError):
+        await async_setup_entry(hass, mock_config_entry)
+
+    assert _IDENTITY_MIGRATION_RESTART_REQUIRED in mock_config_entry.data
+
+
+async def test_async_setup_clears_restart_required_migration_marker(hass, mock_config_entry):
+    """A new Home Assistant process clears restart-required migration markers."""
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        data={**mock_config_entry.data, _IDENTITY_MIGRATION_RESTART_REQUIRED: True},
+    )
+
+    await async_setup(hass, {})
+
+    assert _IDENTITY_MIGRATION_RESTART_REQUIRED not in mock_config_entry.data
 
 
 async def test_legacy_config_entry_identity_preserves_duplicate_state(hass, mock_config_entry):

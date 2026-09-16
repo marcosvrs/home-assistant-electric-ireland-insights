@@ -14,6 +14,7 @@ VERSION: Final = "1.0.0"
 
 CONF_DISCOUNT_PERCENTAGE: Final = "discount_percentage"
 DEFAULT_DISCOUNT_PERCENTAGE: Final = 0
+_IDENTITY_MIGRATION_RESTART_REQUIRED: Final = "identity_migration_restart_required"
 
 LOOKUP_DAYS = 4
 INITIAL_LOOKBACK_DAYS = 30

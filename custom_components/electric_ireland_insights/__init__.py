@@ -21,8 +21,9 @@ from homeassistant.helpers.entity_registry import (
 )
 from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
 from homeassistant.helpers.issue_registry import async_delete_issue
+from homeassistant.helpers.typing import ConfigType
 
-from .const import CONF_DISCOUNT_PERCENTAGE, DOMAIN, _redact_id, hash_account_id
+from .const import _IDENTITY_MIGRATION_RESTART_REQUIRED, CONF_DISCOUNT_PERCENTAGE, DOMAIN, _redact_id, hash_account_id
 from .coordinator import ElectricIrelandCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -32,6 +33,18 @@ PLATFORMS = [Platform.SENSOR]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 type ElectricIrelandConfigEntry = ConfigEntry[ElectricIrelandCoordinator]
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Clear restart-required migration markers from the previous process."""
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        if _IDENTITY_MIGRATION_RESTART_REQUIRED not in entry.data:
+            continue
+        hass.config_entries.async_update_entry(
+            entry,
+            data={key: value for key, value in entry.data.items() if key != _IDENTITY_MIGRATION_RESTART_REQUIRED},
+        )
+    return True
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
@@ -158,12 +171,15 @@ async def _migrate_legacy_config_entry_identity(
     entry: ElectricIrelandConfigEntry,
 ) -> bool:
     """Migrate raw config-entry identity to privacy-safe values."""
+    if entry.data.get(_IDENTITY_MIGRATION_RESTART_REQUIRED):
+        _LOGGER.warning("Cannot migrate legacy config entry identity before restart")
+        return False
     account = entry.data["account_number"]
     account_hash = hash_account_id(account)
     new_title = entry.title.replace(account, account_hash)
     new_unique_id = entry.unique_id
     identity_collision = False
-    if entry.unique_id == account:
+    if entry.unique_id is None or entry.unique_id == account:
         duplicate_entry = next(
             (
                 config_entry
@@ -194,6 +210,10 @@ async def _migrate_legacy_config_entry_identity(
             if hass.config_entries.async_get_entry(duplicate_entry.entry_id) is None:
                 if removal["require_restart"]:
                     _LOGGER.warning("Removed duplicate Electric Ireland config entry; restart required")
+                    hass.config_entries.async_update_entry(
+                        entry,
+                        data={**entry.data, _IDENTITY_MIGRATION_RESTART_REQUIRED: True},
+                    )
                     identity_collision = True
                 _merge_duplicate_config_entry_state(hass, entry, duplicate_entry)
                 new_unique_id = account_hash
