@@ -6,9 +6,9 @@ build-backend = "setuptools.build_meta"
 name = "home-assistant-electric-ireland"
 version = "1.0.0"
 description = "Home Assistant integration for Electric Ireland Insights"
-requires-python = ">=3.13"
+requires-python = ">=3.14.2"
 dependencies = [
-  "beautifulsoup4~=4.14.3",
+  "beautifulsoup4>=4.13.3,<5.0.0",
 ]
 
 [tool.setuptools.packages.find]
@@ -17,12 +17,12 @@ include = ["custom_components*"]
 [project.optional-dependencies]
 dev = [
   "pytest",
-  "pytest-homeassistant-custom-component",
+  # Pin the test harness to the declared minimum Home Assistant release.
+  "pytest-homeassistant-custom-component==0.13.320",
   "pytest-asyncio",
   "pytest-cov",
   "aioresponses",
   "mypy>=1.19",
-  "types-beautifulsoup4",
   "ruff",
   "pre-commit",
 ]
