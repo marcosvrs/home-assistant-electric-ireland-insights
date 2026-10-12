@@ -31,4 +31,6 @@ repos:
         files: ^custom_components/
         args: [--strict, --no-warn-return-any, --no-warn-unused-ignores, --ignore-missing-imports]
         additional_dependencies:
-          - types-beautifulsoup4
+          - beautifulsoup4>=4.13.3,<5.0.0
+          # Keep HA types aligned with the pinned test harness in pyproject.toml.
+          - homeassistant==2026.3.4

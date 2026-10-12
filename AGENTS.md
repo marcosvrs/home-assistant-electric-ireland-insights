@@ -12,7 +12,7 @@ Home Assistant custom integration (HACS) for **Electric Ireland Insights**. Scra
 ├── tests/                                         # All tests (12 test files + 2 conftest, see its own AGENTS.md)
 ├── docs/index.md                                  # HA-format integration documentation
 ├── brands/README.md                               # Branding assets (pending HA brands repo submission)
-├── .github/workflows/validate.yml                 # CI: hassfest, HACS, ruff, mypy, tests (3.13)
+├── .github/workflows/validate.yml                 # CI: hassfest, HACS, ruff, mypy, tests (Python 3.14, HA 2026.3.4)
 ├── .github/dependabot.yml                         # Automated dependency updates (pip + actions)
 ├── .pre-commit-config.yaml                        # Pre-commit hooks: ruff, mypy, codespell, whitespace
 ├── pyproject.toml                                 # Build config, dev deps, ruff + mypy + pytest settings
