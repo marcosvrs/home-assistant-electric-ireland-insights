@@ -440,3 +440,17 @@ Before any change is considered complete:
 - The integration scrapes HTML (no official API). Login mimics browser interaction with CSRF tokens. This is fragile — website changes can break the integration.
 - `beautifulsoup4` is the only external dependency. All HTTP goes through HA's aiohttp infrastructure.
 - Statistics use cumulative sum with overlap detection to maintain recorder continuity.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live in local Markdown under `.scratch/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: root `GLOSSARY.md` and `docs/adr/`. See `docs/agents/domain.md`.
