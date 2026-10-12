@@ -14,12 +14,23 @@ VERSION: Final = "1.0.0"
 
 CONF_DISCOUNT_PERCENTAGE: Final = "discount_percentage"
 DEFAULT_DISCOUNT_PERCENTAGE: Final = 0
+
 _IDENTITY_MIGRATION_RESTART_REQUIRED: Final = "identity_migration_restart_required"
 
 LOOKUP_DAYS = 4
 INITIAL_LOOKBACK_DAYS = 30
 SCAN_INTERVAL = timedelta(hours=3)
 DATA_GAP_THRESHOLD_DAYS = 5
+
+
+def configured_discount_percentage(
+    options_value: int | str | None,
+    data_value: int | str | None,
+) -> int:
+    """Resolve options, legacy data, and the default discount consistently."""
+    value = options_value if options_value is not None else data_value
+    return int(value) if value is not None else DEFAULT_DISCOUNT_PERCENTAGE
+
 
 _API_LOCKS: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = weakref.WeakKeyDictionary()
 

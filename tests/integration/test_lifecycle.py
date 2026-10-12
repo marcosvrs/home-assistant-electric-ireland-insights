@@ -6,12 +6,14 @@ Real: async_setup_entry, coordinator, recorder statistics, sensor platform.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import re
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import aiohttp
-from aioresponses import aioresponses
+from aioresponses import CallbackResult, aioresponses
 from homeassistant.components.recorder import get_instance
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
@@ -255,6 +257,87 @@ async def test_two_accounts_load_independently(
 
     assert e1.state == ConfigEntryState.LOADED
     assert e2.state == ConfigEntryState.LOADED
+
+
+async def test_concurrent_account_setups_serialize_provider_requests(
+    recorder_mock,
+    hass: HomeAssistant,
+    enable_custom_integrations,
+) -> None:
+    """Independent coordinators share one lock around real provider requests."""
+    partner_2, contract_2, premise_2 = "RP2", "RC2", "RPR2"
+    entries = (
+        _entry(ACCOUNT_1),
+        _entry(ACCOUNT_2, partner=partner_2, contract=contract_2, premise=premise_2),
+    )
+    for entry in entries:
+        entry.add_to_hass(hass)
+
+    active_requests = 0
+    max_active_requests = 0
+
+    def tracked_response(body: str, *, content_type: str, headers: dict[str, str] | None = None):
+        async def callback(_url, **_kwargs):
+            nonlocal active_requests, max_active_requests
+            active_requests += 1
+            max_active_requests = max(max_active_requests, active_requests)
+            try:
+                await asyncio.sleep(0.001)
+            finally:
+                active_requests -= 1
+            return CallbackResult(
+                status=200,
+                body=body,
+                content_type=content_type,
+                headers=headers or {},
+            )
+
+        return callback
+
+    dashboard_html = page(acct_div(ACCOUNT_1), acct_div(ACCOUNT_2))
+    empty_hourly = json.dumps({"isSuccess": True, "data": []})
+    empty_bill_periods = json.dumps({"isSuccess": True, "data": []})
+
+    with aioresponses() as mocked_http:
+        mocked_http.get(
+            f"{BASE_URL}/",
+            callback=tracked_response(LOGIN_PAGE, content_type="text/html", headers={"Set-Cookie": "rvt=tok1"}),
+            repeat=True,
+        )
+        mocked_http.post(
+            f"{BASE_URL}/",
+            callback=tracked_response(dashboard_html, content_type="text/html"),
+            repeat=True,
+        )
+        mocked_http.post(
+            f"{BASE_URL}/Accounts/OnEvent",
+            callback=tracked_response(insights_page(), content_type="text/html"),
+            repeat=True,
+        )
+        for partner, contract, premise in (
+            (PARTNER, CONTRACT, PREMISE),
+            (partner_2, contract_2, premise_2),
+        ):
+            meter_url = rf"{re.escape(BASE_URL)}/MeterInsight/{partner}/{contract}/{premise}"
+            mocked_http.get(
+                re.compile(rf"{meter_url}/bill-period"),
+                callback=tracked_response(empty_bill_periods, content_type="application/json"),
+                repeat=True,
+            )
+            mocked_http.get(
+                re.compile(rf"{meter_url}/hourly-usage"),
+                callback=tracked_response(empty_hourly, content_type="application/json"),
+                repeat=True,
+            )
+
+        results = await asyncio.gather(*(hass.config_entries.async_setup(entry.entry_id) for entry in entries))
+        await hass.async_block_till_done()
+
+    assert results == [True, True]
+    assert all(entry.state == ConfigEntryState.LOADED for entry in entries)
+    assert max_active_requests == 1
+    for entry in entries:
+        await hass.config_entries.async_unload(entry.entry_id)
 
 
 async def test_unload_one_keeps_other(

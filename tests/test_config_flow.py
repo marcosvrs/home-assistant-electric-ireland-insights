@@ -956,10 +956,19 @@ async def test_options_flow_updates_discount(recorder_mock, hass, enable_custom_
     assert updated.options == {"discount_percentage": 30}
 
 
+@pytest.mark.parametrize(
+    ("legacy_discount", "expected_discount"),
+    [(20, 20), (None, 0)],
+)
 async def test_options_flow_uses_legacy_data_discount(
-    recorder_mock, hass, enable_custom_integrations, mock_setup_entry
+    recorder_mock,
+    hass,
+    enable_custom_integrations,
+    mock_setup_entry,
+    legacy_discount,
+    expected_discount,
 ):
-    """Options flow keeps a legacy data discount when options are empty."""
+    """Options flow uses a data discount or the default when options are empty."""
     from pytest_homeassistant_custom_component.common import MockConfigEntry
 
     entry = MockConfigEntry(
@@ -968,7 +977,7 @@ async def test_options_flow_uses_legacy_data_discount(
             "username": "test@test.com",
             "password": "testpass",
             "account_number": ACCOUNT,
-            CONF_DISCOUNT_PERCENTAGE: 20,
+            CONF_DISCOUNT_PERCENTAGE: legacy_discount,
         },
         options={},
         unique_id=ACCOUNT_HASH,
@@ -977,15 +986,15 @@ async def test_options_flow_uses_legacy_data_discount(
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
     discount_field = next(key for key in result["data_schema"].schema if key == CONF_DISCOUNT_PERCENTAGE)
-    assert discount_field.default() == 20
+    assert discount_field.default() == expected_discount
 
     result2 = await hass.config_entries.options.async_configure(result["flow_id"], {})
     assert result2["type"] == FlowResultType.CREATE_ENTRY
-    assert result2["data"] == {CONF_DISCOUNT_PERCENTAGE: 20}
+    assert result2["data"] == {CONF_DISCOUNT_PERCENTAGE: expected_discount}
 
     updated = hass.config_entries.async_get_entry(entry.entry_id)
     assert updated is not None
-    assert updated.options == {CONF_DISCOUNT_PERCENTAGE: 20}
+    assert updated.options == {CONF_DISCOUNT_PERCENTAGE: expected_discount}
     await async_wait_recording_done(hass)
 
 

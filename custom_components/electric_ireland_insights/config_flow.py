@@ -14,11 +14,11 @@ from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from .api import ElectricIrelandAPI
 from .const import (
     CONF_DISCOUNT_PERCENTAGE,
-    DEFAULT_DISCOUNT_PERCENTAGE,
     DOMAIN,
     NAME,
     _get_api_lock,
     _redact_id,
+    configured_discount_percentage,
     hash_account_id,
 )
 from .exceptions import AccountNotFound, CannotConnect, InvalidAuth
@@ -151,8 +151,9 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
                     "import_full_history": user_input.get("import_full_history", False),
                 },
                 options={
-                    CONF_DISCOUNT_PERCENTAGE: int(
-                        user_input.get(CONF_DISCOUNT_PERCENTAGE, DEFAULT_DISCOUNT_PERCENTAGE)
+                    CONF_DISCOUNT_PERCENTAGE: configured_discount_percentage(
+                        user_input.get(CONF_DISCOUNT_PERCENTAGE),
+                        None,
                     ),
                 },
             )
@@ -290,11 +291,10 @@ class ElectricIrelandInsightsOptionsFlow(config_entries.OptionsFlowWithReload):
     """Options flow for Electric Ireland Insights."""
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        configured_discount = self.config_entry.options.get(CONF_DISCOUNT_PERCENTAGE)
-        if configured_discount is None:
-            configured_discount = self.config_entry.data.get(CONF_DISCOUNT_PERCENTAGE)
-        if configured_discount is None:
-            configured_discount = DEFAULT_DISCOUNT_PERCENTAGE
+        configured_discount = configured_discount_percentage(
+            self.config_entry.options.get(CONF_DISCOUNT_PERCENTAGE),
+            self.config_entry.data.get(CONF_DISCOUNT_PERCENTAGE),
+        )
 
         if user_input is not None:
             discount = user_input.get(CONF_DISCOUNT_PERCENTAGE)

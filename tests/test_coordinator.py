@@ -1,8 +1,6 @@
 """Tests for the Electric Ireland coordinator."""
 
-import asyncio
 import logging
-from collections.abc import Awaitable, Callable
 from datetime import UTC, date, datetime, timedelta
 from functools import partial
 from unittest.mock import AsyncMock, MagicMock, call, patch
@@ -92,37 +90,6 @@ def _setup_api_mock(
         mock_api_instance.get_hourly_usage = AsyncMock(return_value=hourly_return)
     else:
         mock_api_instance.get_hourly_usage = AsyncMock(return_value=[])
-
-
-class _CountingLock:
-    """Count provider lock acquisitions without serializing a single test flow."""
-
-    def __init__(self) -> None:
-        self.enter_count = 0
-
-    async def __aenter__(self) -> None:
-        self.enter_count += 1
-
-    async def __aexit__(self, *_args: object) -> None:
-        return None
-
-
-class _InterleavingLock:
-    """Run a competing update after the first backfill request releases."""
-
-    def __init__(self, on_third_release: Callable[[], Awaitable[None]]) -> None:
-        self._lock = asyncio.Lock()
-        self._release_count = 0
-        self._on_third_release = on_third_release
-
-    async def __aenter__(self) -> None:
-        await self._lock.acquire()
-
-    async def __aexit__(self, *_args: object) -> None:
-        self._lock.release()
-        self._release_count += 1
-        if self._release_count == 3:
-            await self._on_third_release()
 
 
 # ---------------------------------------------------------------------------
@@ -987,6 +954,42 @@ async def test_legacy_external_statistics_are_renamed(recorder_mock, hass, mock_
     )
     assert set(stats) == hashed_ids
     assert {rows[-1]["sum"] for rows in stats.values()} == {3.0}
+
+
+async def test_hashed_external_statistic_name_is_sanitized(recorder_mock, hass, mock_config_entry):
+    """Hashed statistic metadata must not retain the raw account number."""
+    mock_config_entry.add_to_hass(hass)
+    statistic_id = f"{DOMAIN}:{mock_config_entry.unique_id}_consumption"
+    async_add_external_statistics(
+        hass,
+        StatisticMetaData(
+            has_sum=True,
+            mean_type=StatisticMeanType.NONE,
+            name=f"Electric Ireland Consumption ({ACCOUNT})",
+            source=DOMAIN,
+            statistic_id=statistic_id,
+            unit_of_measurement="kWh",
+            unit_class="energy",
+        ),
+        [
+            StatisticData(
+                start=datetime(2026, 3, 23, tzinfo=UTC),
+                state=1.0,
+                sum=1.0,
+            )
+        ],
+    )
+    await async_wait_recording_done(hass)
+
+    from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
+
+    coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
+    await coordinator.async_migrate_legacy_statistics()
+    await coordinator.async_close()
+    await async_wait_recording_done(hass)
+
+    metadata = await get_instance(hass).async_add_executor_job(partial(get_metadata, hass, statistic_source=DOMAIN))
+    assert metadata[statistic_id][1]["name"] == f"Electric Ireland Consumption ({mock_config_entry.unique_id})"
 
 
 async def test_legacy_external_statistic_collision_merges_raw_history(
@@ -4164,175 +4167,27 @@ async def test_none_value_datapoints_produce_no_statistics(recorder_mock, hass, 
     assert STAT_ID_COST not in stats or len(stats[STAT_ID_COST]) == 0
 
 
-async def test_backfill_releases_provider_lock_between_requests(recorder_mock, hass, mock_config_entry):
-    """Backfill releases the provider lock between provider requests."""
-    mock_config_entry.add_to_hass(hass)
-
-    with (
-        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI") as mock_api_class,
-        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
-        patch(
-            "custom_components.electric_ireland_insights.coordinator.dt_now",
-            return_value=datetime(2026, 3, 25, tzinfo=UTC),
-        ),
-    ):
-        api = AsyncMock()
-        mock_api_class.return_value = api
-        api.authenticate = AsyncMock(return_value=(TEST_METER_IDS, None))
-        api.get_bill_periods = AsyncMock(
-            return_value=[
-                {"startDate": "2026-03-23", "endDate": "2026-03-24"},
-            ]
-        )
-        api.get_hourly_usage = AsyncMock(return_value=[])
-
-        from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
-
-        coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
-        lock = _CountingLock()
-        coordinator._api_lock = lock
-
-        await coordinator.async_tariff_backfill(full_history=True)
-        await hass.async_block_till_done()
-        await async_wait_recording_done(hass)
-        await coordinator.async_close()
-
-    assert lock.enter_count == 4
-    assert api.get_hourly_usage.await_count == 2
-
-
-async def test_foreground_releases_provider_lock_between_requests(recorder_mock, hass, mock_config_entry):
-    """Foreground refresh releases the provider lock between provider requests."""
-    mock_config_entry.add_to_hass(hass)
-
-    with (
-        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI") as mock_api_class,
-        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
-        patch(
-            "custom_components.electric_ireland_insights.coordinator.dt_now",
-            return_value=datetime(2026, 3, 25, tzinfo=UTC),
-        ),
-    ):
-        api = AsyncMock()
-        mock_api_class.return_value = api
-        api.authenticate = AsyncMock(return_value=(TEST_METER_IDS, None))
-        api.get_bill_periods = AsyncMock(return_value=[])
-        api.get_hourly_usage = AsyncMock(return_value=[])
-
-        from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
-
-        coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
-        lock = _CountingLock()
-        coordinator._api_lock = lock
-
-        await coordinator._async_update_data()
-        await hass.async_block_till_done()
-        await async_wait_recording_done(hass)
-        await coordinator.async_close()
-
-    assert lock.enter_count == 2 + LOOKUP_DAYS
-    assert api.get_hourly_usage.await_count == LOOKUP_DAYS
-
-
-async def test_foreground_interleaves_between_backfill_requests(recorder_mock, hass, mock_config_entry):
-    """Foreground provider calls can run between backfill requests."""
-    mock_config_entry.add_to_hass(hass)
-    second_entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={
-            "username": "second@test.com",
-            "password": "testpass",
-            "account_number": "100000002",
-        },
-        unique_id="second-account",
-    )
-    second_entry.add_to_hass(hass)
-    call_order: list[str] = []
-
-    with (
-        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI") as mock_api_class,
-        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
-        patch(
-            "custom_components.electric_ireland_insights.coordinator.get_last_statistics",
-            return_value={},
-        ),
-        patch(
-            "custom_components.electric_ireland_insights.coordinator.dt_now",
-            return_value=datetime(2026, 3, 25, tzinfo=UTC),
-        ),
-    ):
-        first_api = AsyncMock()
-        second_api = AsyncMock()
-        mock_api_class.side_effect = [first_api, second_api]
-
-        async def first_authenticate(*_args: object) -> tuple[dict[str, str], None]:
-            call_order.append("backfill:authenticate")
-            return TEST_METER_IDS, None
-
-        async def first_bill_periods(*_args: object) -> list[dict[str, str]]:
-            call_order.append("backfill:bill_periods")
-            return [{"startDate": "2026-03-23", "endDate": "2026-03-24"}]
-
-        async def first_hourly_usage(
-            _session: object, _meter_ids: object, target_date: date
-        ) -> list[dict[str, object]]:
-            call_order.append(f"backfill:{target_date.day}")
-            return []
-
-        async def second_authenticate(*_args: object) -> tuple[dict[str, str], None]:
-            call_order.append("foreground:authenticate")
-            return TEST_METER_IDS, None
-
-        async def second_bill_periods(*_args: object) -> list[dict[str, str]]:
-            call_order.append("foreground:bill_periods")
-            return []
-
-        async def second_hourly_usage(
-            _session: object, _meter_ids: object, target_date: date
-        ) -> list[dict[str, object]]:
-            call_order.append(f"foreground:{target_date.day}")
-            return []
-
-        first_api.authenticate = AsyncMock(side_effect=first_authenticate)
-        first_api.get_bill_periods = AsyncMock(side_effect=first_bill_periods)
-        first_api.get_hourly_usage = AsyncMock(side_effect=first_hourly_usage)
-        second_api.authenticate = AsyncMock(side_effect=second_authenticate)
-        second_api.get_bill_periods = AsyncMock(side_effect=second_bill_periods)
-        second_api.get_hourly_usage = AsyncMock(side_effect=second_hourly_usage)
-
-        from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
-
-        first_coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
-        second_coordinator = ElectricIrelandCoordinator(hass, second_entry)
-
-        async def run_foreground() -> None:
-            await second_coordinator._async_update_data()
-
-        lock = _InterleavingLock(run_foreground)
-        first_coordinator._api_lock = lock
-        second_coordinator._api_lock = lock
-
-        await first_coordinator.async_tariff_backfill(full_history=True)
-        await hass.async_block_till_done()
-        await async_wait_recording_done(hass)
-        await first_coordinator.async_close()
-        await second_coordinator.async_close()
-
-    day_23_index = call_order.index("backfill:23")
-    day_24_index = call_order.index("backfill:24")
-    foreground_auth_index = call_order.index("foreground:authenticate")
-    assert day_23_index < foreground_auth_index < day_24_index
-    assert second_api.get_hourly_usage.await_count == LOOKUP_DAYS
-
-
+@pytest.mark.parametrize(
+    ("discount_options", "discount_data"),
+    [
+        ({"discount_percentage": 0}, {}),
+        ({}, {"discount_percentage": None}),
+    ],
+)
 async def test_zero_discount_clears_existing_discounted_statistics(
     recorder_mock,
     hass,
     mock_config_entry,
+    discount_options,
+    discount_data,
 ):
     """A zero discount removes only this account's discounted statistics."""
     mock_config_entry.add_to_hass(hass)
-    hass.config_entries.async_update_entry(mock_config_entry, options={"discount_percentage": 0})
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        data={**mock_config_entry.data, **discount_data},
+        options=discount_options,
+    )
     other_account_stat = f"{DOMAIN}:other_cost_discounted"
     legacy_account_stat = f"{DOMAIN}:{ACCOUNT}_cost_discounted"
     tariff_stat = f"{DOMAIN}:{ACCOUNT_HASH}_cost_off_peak_discounted"

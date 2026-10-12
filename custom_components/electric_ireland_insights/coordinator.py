@@ -42,13 +42,13 @@ from .api import ElectricIrelandAPI
 from .const import (
     CONF_DISCOUNT_PERCENTAGE,
     DATA_GAP_THRESHOLD_DAYS,
-    DEFAULT_DISCOUNT_PERCENTAGE,
     DOMAIN,
     INITIAL_LOOKBACK_DAYS,
     LOOKUP_DAYS,
     SCAN_INTERVAL,
     _get_api_lock,
     _redact_id,
+    configured_discount_percentage,
     hash_account_id,
 )
 from .exceptions import CachedIdsInvalid, CannotConnect, InvalidAuth
@@ -177,14 +177,11 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
         )
 
     def _get_discount_percentage(self) -> int:
-        """Return the configured discount, including legacy entry data."""
-        discount = self._config_entry.options.get(CONF_DISCOUNT_PERCENTAGE)
-        if discount is None:
-            discount = self._config_entry.data.get(
-                CONF_DISCOUNT_PERCENTAGE,
-                DEFAULT_DISCOUNT_PERCENTAGE,
-            )
-        return int(discount)
+        """Return the effective discount, including legacy entry data."""
+        return configured_discount_percentage(
+            self._config_entry.options.get(CONF_DISCOUNT_PERCENTAGE),
+            self._config_entry.data.get(CONF_DISCOUNT_PERCENTAGE),
+        )
 
     async def async_migrate_legacy_statistics(self) -> None:
         """Rename raw-account statistic metadata to privacy-safe IDs."""
@@ -192,6 +189,30 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
         metadata = await recorder.async_add_executor_job(partial(get_metadata, self.hass, statistic_source=DOMAIN))
         legacy_prefix = f"{DOMAIN}:{self._account}_"
         statistic_replacements: dict[str, str] = {}
+        hashed_prefix = f"{DOMAIN}:{self._account_hash}_"
+        for statistic_id in sorted(metadata):
+            if not statistic_id.startswith(hashed_prefix):
+                continue
+
+            hashed_metadata_id, hashed_metadata = metadata[statistic_id]
+            hashed_name = hashed_metadata.get("name")
+            if hashed_name is None or self._account not in hashed_name:
+                continue
+
+            sanitized_metadata: StatisticMetaData = {
+                **hashed_metadata,
+                "name": hashed_name.replace(self._account, self._account_hash),
+                "statistic_id": statistic_id,
+            }
+            await self._async_update_statistic_metadata(
+                recorder,
+                statistic_id=statistic_id,
+                metadata_id=hashed_metadata_id,
+                old_metadata=hashed_metadata,
+                new_metadata=sanitized_metadata,
+            )
+            metadata[statistic_id] = (hashed_metadata_id, sanitized_metadata)
+
         for old_statistic_id in sorted(metadata):
             if not old_statistic_id.startswith(legacy_prefix):
                 continue
@@ -332,6 +353,27 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
         if preferences == manager.data:
             return
         await manager.async_update(preferences)
+
+    async def _async_update_statistic_metadata(
+        self,
+        recorder: Recorder,
+        *,
+        statistic_id: str,
+        metadata_id: int,
+        old_metadata: StatisticMetaData,
+        new_metadata: StatisticMetaData,
+    ) -> None:
+        """Wait for one recorder-thread statistic metadata update."""
+
+        def _update(instance: Recorder) -> None:
+            with session_scope(session=instance.get_session()) as session:
+                instance.statistics_meta_manager.update_or_add(
+                    session,
+                    new_metadata,
+                    {statistic_id: (metadata_id, old_metadata)},
+                )
+
+        await self._async_run_recorder_task(recorder, _update)
 
     async def _async_rename_legacy_statistic(
         self,
@@ -701,9 +743,6 @@ class ElectricIrelandCoordinator(DataUpdateCoordinator[CoordinatorData]):
         await _close_session(self._session)
 
     async def async_tariff_backfill(self, *, full_history: bool = False) -> None:
-        await self._async_tariff_backfill(full_history=full_history)
-
-    async def _async_tariff_backfill(self, *, full_history: bool = False) -> None:
         """Background backfill of historical data.
 
         When full_history is True, uses all available bill periods (6-13 months).

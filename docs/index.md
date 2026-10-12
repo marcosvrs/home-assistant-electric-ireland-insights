@@ -100,6 +100,8 @@ The integration imports data as **external statistics** directly into the HA rec
 
 `{account_hash}` is the first 16 characters of the SHA-256 hash of your account number. The raw account number is not used in HA-facing identifiers.
 
+On upgrade, existing hashed statistic names containing an account number are sanitized while recorder history and Energy Dashboard references are retained.
+
 Setting the discount to **0%** removes the account's existing discounted external statistics. Select the gross `_cost` statistic in the Energy Dashboard instead. Re-enabling a discount creates discounted statistics again for subsequent imports; use **Reconfigure → Import full history** if you need historical discounted data rebuilt.
 
 ### Per-tariff breakdown
