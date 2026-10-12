@@ -1,6 +1,7 @@
 {
   "domain": "electric_ireland_insights",
   "name": "Electric Ireland Insights (Unofficial)",
+  "after_dependencies": ["energy"],
   "codeowners": ["@marcosvrs"],
   "config_flow": true,
   "dependencies": ["recorder"],

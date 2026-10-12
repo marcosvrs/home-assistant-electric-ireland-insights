@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import weakref
 from datetime import timedelta
 from typing import Final
 
@@ -13,10 +15,35 @@ VERSION: Final = "1.0.0"
 CONF_DISCOUNT_PERCENTAGE: Final = "discount_percentage"
 DEFAULT_DISCOUNT_PERCENTAGE: Final = 0
 
+_IDENTITY_MIGRATION_RESTART_REQUIRED: Final = "identity_migration_restart_required"
+
 LOOKUP_DAYS = 4
 INITIAL_LOOKBACK_DAYS = 30
 SCAN_INTERVAL = timedelta(hours=3)
 DATA_GAP_THRESHOLD_DAYS = 5
+
+
+def configured_discount_percentage(
+    options_value: int | str | None,
+    data_value: int | str | None,
+) -> int:
+    """Resolve options, legacy data, and the default discount consistently."""
+    value = options_value if options_value is not None else data_value
+    return int(value) if value is not None else DEFAULT_DISCOUNT_PERCENTAGE
+
+
+_API_LOCKS: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = weakref.WeakKeyDictionary()
+
+
+def _get_api_lock() -> asyncio.Lock:
+    """Return the provider lock for the current Home Assistant event loop."""
+    loop = asyncio.get_running_loop()
+    lock = _API_LOCKS.get(loop)
+    if lock is None:
+        lock = asyncio.Lock()
+        _API_LOCKS[loop] = lock
+    return lock
+
 
 # Maps API tariff bucket keys to stable snake_case identifiers used in
 # statistic IDs (e.g. ``electric_ireland_insights:{acct}_consumption_off_peak``).

@@ -61,11 +61,11 @@ This integration imports external statistics directly into the HA recorder — n
 |---|---|---|
 | `electric_ireland_insights:{account_hash}_consumption` | Hourly electricity consumption (total) | kWh |
 | `electric_ireland_insights:{account_hash}_cost` | Hourly electricity cost (gross, with VAT, no standing charge) | EUR |
-| `electric_ireland_insights:{account_hash}_cost_discounted` | Hourly electricity cost with your configured discount applied (only created when discount > 0) | EUR |
+| `electric_ireland_insights:{account_hash}_cost_discounted` | Hourly electricity cost with your configured discount applied | EUR |
 
 `{account_hash}` is the first 16 characters of the SHA-256 hash of your account number. The raw account number is not used in HA-facing identifiers.
 
-Add the consumption and whichever cost statistic you prefer under **Settings → Energy → Grid consumption**. Use `_cost_discounted` if you want the Energy Dashboard to reflect your plan discount.
+Add the consumption and whichever cost statistic you prefer under **Settings → Energy → Grid consumption**. Use `_cost_discounted` if you want the Energy Dashboard to reflect your plan discount. Setting the discount to **0%** removes the account's existing discounted statistics; use the gross `_cost` statistic instead. Re-enabling a discount creates data for subsequent imports, or use **Reconfigure → Import full history** to rebuild historical discounted data.
 
 #### Per-tariff breakdown
 
@@ -81,10 +81,10 @@ When the current data window contains time-of-use tariff buckets, the integratio
 | `electric_ireland_insights:{account_hash}_cost_mid_peak` | Mid-peak cost (gross) | EUR |
 | `electric_ireland_insights:{account_hash}_cost_on_peak` | On-peak cost (gross) | EUR |
 | `electric_ireland_insights:{account_hash}_cost_flat_rate` | Flat-rate cost from hours tagged as flat rate within a smart tariff plan (gross) | EUR |
-| `electric_ireland_insights:{account_hash}_cost_off_peak_discounted` | Off-peak cost with discount applied (only created when discount > 0) | EUR |
-| `electric_ireland_insights:{account_hash}_cost_mid_peak_discounted` | Mid-peak cost with discount applied (only created when discount > 0) | EUR |
-| `electric_ireland_insights:{account_hash}_cost_on_peak_discounted` | On-peak cost with discount applied (only created when discount > 0) | EUR |
-| `electric_ireland_insights:{account_hash}_cost_flat_rate_discounted` | Flat-rate cost with discount applied (only created when discount > 0) | EUR |
+| `electric_ireland_insights:{account_hash}_cost_off_peak_discounted` | Off-peak cost with discount applied | EUR |
+| `electric_ireland_insights:{account_hash}_cost_mid_peak_discounted` | Mid-peak cost with discount applied | EUR |
+| `electric_ireland_insights:{account_hash}_cost_on_peak_discounted` | On-peak cost with discount applied | EUR |
+| `electric_ireland_insights:{account_hash}_cost_flat_rate_discounted` | Flat-rate cost with discount applied | EUR |
 
 Pure flat-rate accounts (only `flat_rate` buckets in the current data window) only have the aggregate statistics above. Per-tariff statistics are created dynamically on every poll when at least one non-flat bucket is present. The `_flat_rate` bucket appears only within smart-tariff windows that also contain non-flat buckets. See [docs/index.md](docs/index.md) for detailed setup instructions.
 
@@ -123,7 +123,7 @@ Every 3 hours:
 * On **first install**: by default, imports all available historical data (typically 6–13 months) as a background task. This uses many sequential portal requests and may take 10–30 minutes. Uncheck **Import full history** during setup to import only the last 30 days.
 * On **subsequent runs**: fetches the last 4 days to pick up any newly published meter readings.
 * **Full history**: during setup or via **Reconfigure → Import full history**, the user can trigger or re-trigger a background task that fetches all available bill period data. This runs without blocking Home Assistant and typically takes 10–30 minutes.
-* **Discount percentage**: configured during setup or later from the integration **Options**. Changing it reloads the integration and affects newly fetched or re-fetched discounted cost statistics.
+* **Discount percentage**: configured during setup or later from the integration **Options**. Changing it reloads the integration. Setting it to 0 removes existing discounted statistics; non-zero changes affect newly fetched or re-fetched discounted cost statistics.
 * Requests are made **sequentially** (one day at a time) to avoid rate limiting.
 * Both consumption and cost are returned in the same response, with 24 hourly datapoints per day.
 * Data is timestamped at the end of each hourly interval (e.g., `00:59:59` for the midnight hour) and normalized to the hour start for statistics alignment.
@@ -135,7 +135,7 @@ This is the first announced stable release of Electric Ireland Insights. The cur
 ## Known Limitations
 
 * **1-3 day data delay**: Hourly meter readings are published by ESB with a 1-3 day delay. This integration cannot fetch data faster than ESB publishes it.
-* **Discount applies to future `_cost_discounted` data only by default**: Changing the discount percentage in **Options** affects only newly fetched or re-fetched `_cost_discounted` data (the last 4 days on each poll). The `_cost` statistic always remains gross. To recalculate all historical `_cost_discounted` data with a new discount, update the option and then use **Reconfigure → Import full history**. Standing charges and levies are never included.
+* **Discounted statistics are optional**: Non-zero discounts affect newly fetched or re-fetched `_cost_discounted` data (the last 4 days on each poll). Setting the discount to 0 removes existing `_cost_discounted` statistics. The `_cost` statistic always remains gross. To recalculate historical discounted data after re-enabling a discount, use **Reconfigure → Import full history**. Standing charges and levies are never included.
 * **DST transition gap**: Spring-forward and fall-back day behavior has not yet been verified with real Electric Ireland capture fixtures.
 * **Single account per entry**: Each config entry supports one electricity account. To monitor multiple accounts, add the integration once per account.
 * **Scraping dependency**: The integration authenticates via the Electric Ireland web portal. Changes to the portal's HTML structure may break the login flow until the integration is updated.

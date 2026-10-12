@@ -54,10 +54,10 @@ HA Recorder → Energy Dashboard
 
 ## CONVENTIONS (THIS MODULE)
 
-- **Config entry version**: 1 (clean-slate entry schema; no migration hook).
+- **Config entry version**: 2; `async_migrate_entry` upgrades legacy version 1 entries before setup.
 - **Typed config entry**: `type ElectricIrelandConfigEntry = ConfigEntry[ElectricIrelandCoordinator]` used throughout.
-- **Unique ID**: `account_number` (set in config flow, prevents duplicates).
-- **Statistic IDs**: `electric_ireland_insights:{account_number}_consumption`, `electric_ireland_insights:{account_number}_cost` (aggregate); plus per-tariff variants like `_consumption_off_peak`, `_cost_mid_peak` etc. for time-of-use accounts.
+- **Unique ID**: `hash_account_id(account_number)` (set in config flow); legacy raw IDs are migrated during setup with same-domain collision guards.
+- **Statistic IDs**: `electric_ireland_insights:{account_hash}_consumption`, `electric_ireland_insights:{account_hash}_cost` (aggregate); plus per-tariff variants like `_consumption_off_peak`, `_cost_mid_peak` etc. Legacy raw-account IDs and account-bearing metadata names are migrated during setup.
 - **Tariff bucket selection**: Active bucket (flatRate, offPeak, midPeak, onPeak) extracted per hour — only one is active at a time.
 - **State logging**: Coordinator logs state transitions (unavailable ↔ available) once per transition, not every poll.
 

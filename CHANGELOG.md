@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - CI now runs on Python 3.14 with Home Assistant 2026.3.4, and Beautiful Soup's requirement is compatible with Home Assistant's bundled version.
+- Startup migrates supported legacy account, registry, and statistic identities to hashed values while preserving recorder history and Energy Dashboard references; account-bearing names in existing hashed statistics are sanitized.
+- Null discount values consistently fall back to legacy data or the default.
+- Provider requests are serialized across configured entries.
 
 ## [1.0.0] - 2026-07-09
 
