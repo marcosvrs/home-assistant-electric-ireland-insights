@@ -18,7 +18,7 @@ include = ["custom_components*"]
 dev = [
   "pytest",
   # Pin the test harness to the declared minimum Home Assistant release.
-  "pytest-homeassistant-custom-component==0.13.320",
+  "pytest-homeassistant-custom-component==0.13.372",
   "pytest-asyncio",
   "pytest-cov",
   "aioresponses",
