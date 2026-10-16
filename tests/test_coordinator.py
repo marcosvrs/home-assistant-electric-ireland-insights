@@ -19,7 +19,6 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.issue_registry import IssueSeverity
 from homeassistant.helpers.issue_registry import async_get as async_get_issue_registry
 from homeassistant.helpers.update_coordinator import UpdateFailed
-from homeassistant.util.dt import utcnow
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.components.recorder.common import (
     async_wait_recording_done,
@@ -556,10 +555,10 @@ async def test_consumption_statistics_correct(recorder_mock, hass, mock_config_e
 
     with (
         patch(
-            "custom_components.electric_ireland_insights.coordinator.statistics_during_period",
+            "custom_components.electric_ireland_insights.statistics.statistics_during_period",
             side_effect=existing_statistics,
         ) as mock_existing,
-        patch("custom_components.electric_ireland_insights.coordinator.async_add_external_statistics") as mock_add,
+        patch("custom_components.electric_ireland_insights.statistics.async_add_external_statistics") as mock_add,
     ):
         await coordinator._insert_statistics(
             direct_datapoints,
@@ -1351,7 +1350,7 @@ async def test_legacy_data_discount_prevents_statistics_cleanup(recorder_mock, h
 
     with (
         patch(
-            "custom_components.electric_ireland_insights.coordinator.get_metadata",
+            "custom_components.electric_ireland_insights.statistics.get_metadata",
         ) as mock_get_metadata,
         patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI"),
         patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
@@ -2143,7 +2142,7 @@ async def test_cached_ids_fallback_to_full_login(recorder_mock, hass, mock_confi
         messages = [
             record.message
             for record in caplog.records
-            if record.name == "custom_components.electric_ireland_insights.coordinator"
+            if record.name == "custom_components.electric_ireland_insights.refresh"
         ]
         assert messages == ["Cached meter IDs failed during data fetch, re-authenticating"]
 
@@ -2514,7 +2513,7 @@ async def test_bill_period_failure_falls_back_to_blind_fetch(recorder_mock, hass
 
         coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
 
-        with patch("custom_components.electric_ireland_insights.coordinator._LOGGER") as mock_logger:
+        with patch("custom_components.electric_ireland_insights.refresh._LOGGER") as mock_logger:
             await coordinator._async_update_data()
             mock_logger.warning.assert_any_call("Failed to fetch bill periods, falling back to full lookback window")
 
@@ -2586,7 +2585,47 @@ async def test_bill_period_partial_coverage_only_fetches_period_dates(recorder_m
         called_dates = sorted(call.args[2] for call in mock_api_instance.get_hourly_usage.call_args_list)
         expected_dates = sorted(period_start + timedelta(days=i) for i in range(3))
         assert called_dates == expected_dates
-        assert coordinator._bill_periods == bill_periods
+
+
+async def test_polling_imports_successful_days_when_another_day_is_unavailable(recorder_mock, hass, mock_config_entry):
+    """A transient failure on one lookback date does not discard successful dates."""
+    mock_config_entry.add_to_hass(hass)
+    fake_now = datetime(2026, 6, 15, 12, 0, tzinfo=UTC)
+    yesterday = (fake_now - timedelta(days=1)).date()
+    bill_periods = [
+        {
+            "startDate": f"{(yesterday - timedelta(days=1)).isoformat()}T00:00:00Z",
+            "endDate": f"{yesterday.isoformat()}T23:59:59Z",
+        }
+    ]
+
+    with (
+        patch(
+            "custom_components.electric_ireland_insights.coordinator.get_last_statistics",
+            return_value={},
+        ),
+        patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI") as mock_api_class,
+        patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
+        patch("custom_components.electric_ireland_insights.coordinator.dt_now", return_value=fake_now),
+    ):
+        mock_api_instance = AsyncMock()
+        _setup_api_mock(
+            mock_api_instance,
+            bill_periods=bill_periods,
+            hourly_side_effect=[CannotConnect("temporary outage"), make_datapoints(1)],
+        )
+        mock_api_class.return_value = mock_api_instance
+
+        from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
+
+        coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
+        result = await coordinator._async_update_data()
+
+        assert result["datapoint_count"] == 24
+        assert [call.args[2] for call in mock_api_instance.get_hourly_usage.call_args_list] == [
+            yesterday - timedelta(days=1),
+            yesterday,
+        ]
 
 
 async def test_bill_period_gap_between_periods_skips_gap_dates(recorder_mock, hass, mock_config_entry):
@@ -2669,9 +2708,9 @@ async def test_bill_period_partial_coverage_with_tariff_buckets(recorder_mock, h
         ),
         patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI") as mock_api_class,
         patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
-        patch("custom_components.electric_ireland_insights.coordinator.statistics_during_period", return_value={}),
+        patch("custom_components.electric_ireland_insights.statistics.statistics_during_period", return_value={}),
         patch(
-            "custom_components.electric_ireland_insights.coordinator.async_add_external_statistics",
+            "custom_components.electric_ireland_insights.statistics.async_add_external_statistics",
         ) as mock_add_stats,
         patch("custom_components.electric_ireland_insights.coordinator.dt_now", return_value=fake_now),
     ):
@@ -3334,6 +3373,7 @@ async def test_bill_periods_refetched_after_24h(recorder_mock, hass, mock_config
 
     bill_periods = [{"startDate": "2026-03-01T00:00:00Z", "endDate": "2026-03-31T00:00:00Z"}]
 
+    cache_time = datetime(2026, 3, 2, 12, 0, tzinfo=UTC)
     with (
         patch(
             "custom_components.electric_ireland_insights.coordinator.get_last_statistics",
@@ -3341,6 +3381,14 @@ async def test_bill_periods_refetched_after_24h(recorder_mock, hass, mock_config
         ),
         patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI") as mock_api_class,
         patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
+        patch(
+            "custom_components.electric_ireland_insights.refresh.utcnow",
+            side_effect=[
+                cache_time,
+                cache_time + timedelta(hours=25),
+                cache_time + timedelta(hours=25),
+            ],
+        ),
     ):
         mock_api_instance = AsyncMock()
         _setup_api_mock(mock_api_instance)
@@ -3353,8 +3401,6 @@ async def test_bill_periods_refetched_after_24h(recorder_mock, hass, mock_config
 
         await coordinator._async_update_data()
         assert mock_api_instance.get_bill_periods.call_count == 1
-
-        coordinator._bill_periods_fetched_at = utcnow() - timedelta(hours=25)
 
         await coordinator._async_update_data()
         assert mock_api_instance.get_bill_periods.call_count == 2
@@ -3373,6 +3419,7 @@ async def test_bill_period_cache_failure_falls_back_to_blind_fetch(recorder_mock
         }
     ]
 
+    cache_time = fake_now
     with (
         patch(
             "custom_components.electric_ireland_insights.coordinator.get_last_statistics",
@@ -3381,6 +3428,10 @@ async def test_bill_period_cache_failure_falls_back_to_blind_fetch(recorder_mock
         patch("custom_components.electric_ireland_insights.coordinator.ElectricIrelandAPI") as mock_api_class,
         patch("custom_components.electric_ireland_insights.coordinator.async_create_clientsession"),
         patch("custom_components.electric_ireland_insights.coordinator.dt_now", return_value=fake_now),
+        patch(
+            "custom_components.electric_ireland_insights.refresh.utcnow",
+            side_effect=[cache_time, cache_time + timedelta(hours=25)],
+        ),
     ):
         mock_api_instance = AsyncMock()
         _setup_api_mock(
@@ -3395,13 +3446,9 @@ async def test_bill_period_cache_failure_falls_back_to_blind_fetch(recorder_mock
         coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
 
         await coordinator._async_update_data()
-        assert coordinator._bill_periods == bill_periods
         assert mock_api_instance.get_hourly_usage.call_count == 1
 
-        coordinator._bill_periods_fetched_at = utcnow() - timedelta(hours=25)
-
         await coordinator._async_update_data()
-        assert coordinator._bill_periods == []
         assert mock_api_instance.get_hourly_usage.call_count == LOOKUP_DAYS + 1
 
 
@@ -3634,12 +3681,23 @@ async def test_backfill_empty_does_not_mark_initialized(recorder_mock, hass):
 
 
 async def test_bill_period_cache_cleared_on_meter_id_rediscovery(recorder_mock, hass, mock_config_entry):
-    """Cached bill periods must be invalidated when meter IDs are rediscovered."""
-    mock_config_entry.add_to_hass(hass)
-
+    """Rediscovered meter IDs trigger fresh bill periods for the next polling cycle."""
+    old_ids = {"partner": "P1", "contract": "C1", "premise": "PR1"}
     discovered_ids = {"partner": "P2", "contract": "C2", "premise": "PR2"}
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        data={
+            **dict(mock_config_entry.data),
+            "partner_id": old_ids["partner"],
+            "contract_id": old_ids["contract"],
+            "premise_id": old_ids["premise"],
+        },
+    )
 
     fake_now = datetime(2026, 1, 2, 12, 0, tzinfo=UTC)
+    old_bill_periods = [{"startDate": "2025-01-01T00:00:00Z", "endDate": "2025-01-01T00:00:00Z"}]
+    new_bill_periods = [{"startDate": "2026-01-01T00:00:00Z", "endDate": "2026-01-01T00:00:00Z"}]
     with (
         patch(
             "custom_components.electric_ireland_insights.coordinator.get_last_statistics",
@@ -3650,26 +3708,20 @@ async def test_bill_period_cache_cleared_on_meter_id_rediscovery(recorder_mock, 
         patch("custom_components.electric_ireland_insights.coordinator.dt_now", return_value=fake_now),
     ):
         mock_api_instance = AsyncMock()
-        new_bill_periods = [{"startDate": "2026-01-01T00:00:00Z", "endDate": "2026-01-01T00:00:00Z"}]
-        _setup_api_mock(
-            mock_api_instance,
-            authenticate_return=(discovered_ids, discovered_ids),
-            bill_periods=new_bill_periods,
-            hourly_return=[],
-        )
+        mock_api_instance.authenticate = AsyncMock(side_effect=[(old_ids, None), (discovered_ids, discovered_ids)])
+        mock_api_instance.get_bill_periods = AsyncMock(side_effect=[old_bill_periods, new_bill_periods])
+        mock_api_instance.get_hourly_usage = AsyncMock(return_value=[])
         mock_api_class.return_value = mock_api_instance
 
         from custom_components.electric_ireland_insights.coordinator import ElectricIrelandCoordinator
 
         coordinator = ElectricIrelandCoordinator(hass, mock_config_entry)
-        coordinator._bill_periods = [{"startDate": "2025-01-01T00:00:00Z", "endDate": "2025-01-01T00:00:00Z"}]
-        coordinator._bill_periods_fetched_at = utcnow()
-
+        await coordinator._async_update_data()
         await coordinator._async_update_data()
 
-        assert coordinator._bill_periods == new_bill_periods
-        assert coordinator._bill_periods_fetched_at is not None
-        assert mock_config_entry.data.get("partner_id") == "P2"
+        assert mock_api_instance.get_bill_periods.call_count == 2
+        assert mock_api_instance.get_hourly_usage.call_args.args[2] == date(2026, 1, 1)
+        assert mock_config_entry.data["partner_id"] == "P2"
 
 
 async def test_backfill_unexpected_error_creates_repair_issue(recorder_mock, hass, caplog):

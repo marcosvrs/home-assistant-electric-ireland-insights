@@ -2,21 +2,24 @@
 
 ## OVERVIEW
 
-14-file HA custom integration that scrapes Electric Ireland for hourly energy data and imports it as external statistics. No sensor entities for core data — only diagnostic sensors for health monitoring.
+Home Assistant custom integration that scrapes Electric Ireland for hourly energy data and imports it as external statistics. No sensor entities for core data — only diagnostic sensors for health monitoring.
 
 ## STRUCTURE
 
 ```
 electric_ireland_insights/
-├── __init__.py         # Entry point: setup, unload
-├── api.py              # Scraping client: login, account discovery, MeterInsight API
-├── coordinator.py      # DataUpdateCoordinator: fetch + external statistics import
-├── config_flow.py      # Config flow: user, account select, reauth, reconfigure
-├── sensor.py           # Diagnostic sensors only (last_import_time, data_freshness)
-├── types.py            # TypedDicts: ElectricIrelandDatapoint, CoordinatorData, MeterIds
-├── exceptions.py       # InvalidAuth, CannotConnect, AccountNotFound, CachedIdsInvalid
-├── diagnostics.py      # async_get_config_entry_diagnostics with redaction
-├── const.py            # DOMAIN, NAME, SCAN_INTERVAL, LOOKBACK constants
+├── __init__.py          # Entry point: setup, unload
+├── api.py               # Scraping client: login, account discovery, MeterInsight API
+├── refresh.py           # Current polling-window auth, billing-period selection, sequential fetches
+├── coordinator.py       # DataUpdateCoordinator: scheduling, statistics import, backfill orchestration
+├── statistics.py        # External statistics import, continuity, recorder migration
+├── identity_migration.py # Privacy-safe account identity migration across HA registries
+├── config_flow.py       # Config flow with shared account credential validation
+├── sensor.py            # Diagnostic sensors only (last_import_time, data_freshness)
+├── types.py             # TypedDicts: ElectricIrelandDatapoint, CoordinatorData, MeterIds
+├── exceptions.py        # InvalidAuth, CannotConnect, AccountNotFound, CachedIdsInvalid
+├── diagnostics.py       # async_get_config_entry_diagnostics with redaction
+├── const.py             # DOMAIN, NAME, SCAN_INTERVAL, LOOKBACK constants
 ├── manifest.json       # Integration metadata, deps: [recorder], req: [beautifulsoup4]
 ├── strings.json        # Translations source: config flow steps/errors, entity names
 ├── translations/
@@ -29,10 +32,13 @@ electric_ireland_insights/
 
 | File | Key Symbols | Responsibility |
 |------|-------------|---------------|
-| `__init__.py` | `async_setup_entry`, `async_unload_entry`, `ElectricIrelandConfigEntry` | Creates coordinator, assigns `entry.runtime_data`, forwards sensor platform. |
+| `__init__.py` | `async_setup_entry`, `async_unload_entry`, `ElectricIrelandConfigEntry` | Calls `async_migrate_identity`, creates coordinator, assigns `entry.runtime_data`, forwards sensor platform. |
+| `identity_migration.py` | `async_migrate_identity` | Owns account identity migration across config entries, device/entity registries, repair issues, and legacy options; setup handles the collision result. |
 | `api.py` | `ElectricIrelandAPI`, `MeterInsightClient` | Session-based scraping: GET login page → extract CSRF → POST credentials → scrape account div → navigate Insights → call MeterInsight/hourly-usage. Sequential day-by-day. |
-| `coordinator.py` | `ElectricIrelandCoordinator`, `_async_update_data`, `_insert_statistics` | 3-hour polling. First run: 30-day backfill. Subsequent: 4-day lookback. Imports consumption + cost (aggregate + per-tariff) via `async_add_external_statistics`. Handles cumulative sum continuity with overlap detection. Fires `electric_ireland_insights_data_imported` event. Creates repair issue if data stale >5 days. |
-| `config_flow.py` | `ElectricIrelandInsightsConfigFlow` | Steps: `user` (credentials) → `account` (dropdown if multiple, auto-selected if one) → `options` (import full history toggle) → create entry. `reauth_confirm` for expired passwords. `reconfigure` for password change + meter ID rediscovery + full history import. |
+| `coordinator.py` | `ElectricIrelandCoordinator`, `_async_update_data` | HA polling schedule, state transitions, statistics import, events, and tariff backfill. Delegates the current-window data fetch to `RefreshWorkflow`. |
+| `refresh.py` | `RefreshWorkflow`, `RefreshResult` | Owns current-window authentication fallback, billing-period cache and date selection, sequential requests, and partial/all-failure rules. |
+| `statistics.py` | `StatisticsMixin`, `async_import_datapoints` | One statistics import operation for aggregate and applicable per-tariff data, cumulative continuity, recorder-thread writes, legacy statistic identity migration, and Energy Dashboard preference migration. |
+| `config_flow.py` | `ElectricIrelandInsightsConfigFlow`, `_async_validate_account_credentials` | Config steps retain flow-specific outcomes; one shared check owns validation session, provider lock, and error normalization for account completion, reauth, and reconfigure. |
 | `sensor.py` | `ElectricIrelandDiagnosticSensor`, `DIAGNOSTIC_SENSORS`, `PARALLEL_UPDATES = 0` | One `CoordinatorEntity` subclass instantiated per diagnostic description: last import timestamp + data freshness days. Disabled by default. EntityCategory.DIAGNOSTIC. |
 | `types.py` | `ElectricIrelandDatapoint`, `CoordinatorData`, `MeterIds` | TypedDicts for type safety. Omitted from coverage (TypedDict-only). |
 | `exceptions.py` | `InvalidAuth`, `CannotConnect`, `AccountNotFound`, `CachedIdsInvalid` | Auth errors → reauth flow. Connect errors → retry. CachedIdsInvalid → full login fallback (not auth failure). |
@@ -43,13 +49,13 @@ electric_ireland_insights/
 ```
 Electric Ireland Website
     ↓ (aiohttp session with cookie jar)
-ElectricIrelandAPI.fetch_day_range()
-    ↓ (list[ElectricIrelandDatapoint])
 ElectricIrelandCoordinator._async_update_data()
-    ↓ (StatisticData with cumulative sums)
-async_add_external_statistics(hass, metadata, stats)
     ↓
-HA Recorder → Energy Dashboard
+RefreshWorkflow.async_fetch()
+    ↓ (sequential API calls; list[ElectricIrelandDatapoint])
+ElectricIrelandAPI.get_hourly_usage()
+    ↓
+coordinator statistics import → HA Recorder → Energy Dashboard
 ```
 
 ## CONVENTIONS (THIS MODULE)
