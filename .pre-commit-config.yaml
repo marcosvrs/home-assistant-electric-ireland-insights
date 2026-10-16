@@ -33,4 +33,4 @@ repos:
         additional_dependencies:
           - beautifulsoup4>=4.13.3,<5.0.0
           # Keep HA types aligned with the pinned test harness in pyproject.toml.
-          - homeassistant==2026.3.4
+          - homeassistant==2026.10.1
