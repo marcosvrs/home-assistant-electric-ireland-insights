@@ -274,10 +274,10 @@ meter identifiers needed for the MeterInsight API endpoints.
 
 ```html
 <div id="modelData"
-     data-partner="7006723196"
-     data-contract="1502212609"
-     data-premise="63353984"
-     data-accountno="951785073"
+     data-partner="ANON_PARTNER"
+     data-contract="ANON_CONTRACT"
+     data-premise="ANON_PREMISE"
+     data-accountno="ANON_ACCOUNT"
      data-microgen="False"
      data-prepaycustomer="False"
      data-dualfuelaccount="False"
@@ -530,7 +530,7 @@ is sensitive to concurrent requests from the same session.
 
 ### Session Lifetime Optimisation
 
-- The integration updates hourly (`SCAN_INTERVAL = 60 min`).
+- The integration updates every three hours (`SCAN_INTERVAL = 3 hours`).
 - The session expires in ~10–20 min idle.
 - Therefore, a fresh login is required on every update cycle.
 - Within a single update cycle, batch all API calls quickly (the session extends with each call).

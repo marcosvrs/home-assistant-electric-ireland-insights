@@ -44,7 +44,7 @@ info:
 
   contact:
     name: Electric Ireland Insights HA Integration
-    url: https://github.com/marcosvr/Home-Assistant-Electric-Ireland
+    url: https://github.com/marcosvrs/home-assistant-electric-ireland-insights
 
 servers:
   - url: https://youraccountonline.electricireland.ie
@@ -68,45 +68,40 @@ components:
       in: path
       required: true
       description: |
-        Bidgely partner identifier. A numeric string (e.g. `7006723196`).
-        Extracted from the `data-partner` attribute of `<div id="modelData">` on the
-        Insights page.
+        Bidgely partner identifier. A numeric string extracted from the `data-partner`
+        attribute of `<div id="modelData">` on the Insights page.
       schema:
         type: string
         pattern: '^\d+$'
-        example: '7006723196'
 
     contractId:
       name: contractId
       in: path
       required: true
       description: |
-        Bidgely contract identifier. A numeric string (e.g. `1502212609`).
-        Extracted from the `data-contract` attribute of `<div id="modelData">`.
+        Bidgely contract identifier. A numeric string extracted from the `data-contract`
+        attribute of `<div id="modelData">`.
       schema:
         type: string
         pattern: '^\d+$'
-        example: '1502212609'
 
     premiseId:
       name: premiseId
       in: path
       required: true
       description: |
-        Bidgely premise identifier. A numeric string (e.g. `63353984`).
-        Extracted from the `data-premise` attribute of `<div id="modelData">`.
+        Bidgely premise identifier. A numeric string extracted from the `data-premise`
+        attribute of `<div id="modelData">`.
       schema:
         type: string
         pattern: '^\d+$'
-        example: '63353984'
 
   # -------------------------------------------------------------------------
   # Reusable schemas
   # -------------------------------------------------------------------------
   schemas:
     TariffBucket:
-      type: object
-      nullable: true
+      type: [object, "null"]
       description: |
         Cost and consumption for a single tariff period. `null` when no data exists
         for this tariff in the given time window. Which buckets are populated depends
@@ -152,8 +147,7 @@ components:
         flatRate:
           $ref: '#/components/schemas/TariffBucket'
         categories:
-          type: object
-          nullable: true
+          type: [object, "null"]
           description: |
             Additional categorisation. Observed as `null` in all captured responses.
             Purpose unknown — possibly reserved for future tariff structures.
@@ -516,7 +510,8 @@ paths:
       responses:
         '200':
           description: |
-            Successful response with 24 hourly entries (one per hour, 00:00–23:00).
+            Successful response containing the hourly usage intervals returned for the
+            requested day. Partial-day responses can contain fewer than 24 entries.
             Hours without data have all tariff fields set to `null`.
           content:
             application/json:
@@ -527,9 +522,7 @@ paths:
                     properties:
                       data:
                         type: array
-                        description: Exactly 24 entries for a full day of data.
-                        minItems: 24
-                        maxItems: 24
+                        description: One entry per hourly interval returned by the provider.
                         items:
                           $ref: '#/components/schemas/UsageDatapoint'
                     required:

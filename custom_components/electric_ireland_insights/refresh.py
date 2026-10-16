@@ -7,9 +7,9 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from typing import TYPE_CHECKING
 
 import aiohttp
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.util.dt import utcnow
 
@@ -17,6 +17,9 @@ from .api import ElectricIrelandAPI
 from .const import _redact_id
 from .exceptions import CachedIdsInvalid, CannotConnect
 from .types import BillPeriod, ElectricIrelandDatapoint, MeterIds
+
+if TYPE_CHECKING:
+    from . import ElectricIrelandConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,7 +38,7 @@ class RefreshWorkflow:
     def __init__(
         self,
         hass: HomeAssistant,
-        config_entry: ConfigEntry,
+        config_entry: ElectricIrelandConfigEntry,
         api: ElectricIrelandAPI,
         session: aiohttp.ClientSession,
         api_lock: asyncio.Lock,
