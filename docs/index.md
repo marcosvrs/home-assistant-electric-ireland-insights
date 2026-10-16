@@ -23,7 +23,7 @@ ha_integration_type: service
 
 ## Prerequisites
 
-- **Home Assistant 2026.10.1** or newer
+- **Home Assistant 2026.9.0** or newer
 - An active Electric Ireland account with **Insights access** enabled
 - An **electricity** account (gas-only accounts are not supported)
 - A **smart meter** installed at your premises (required for hourly data)

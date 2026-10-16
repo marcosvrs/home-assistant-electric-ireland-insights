@@ -653,6 +653,7 @@ async def test_unload_entry_keeps_session_open_when_platform_unload_fails(
         assert mock_config_entry.state == ConfigEntryState.FAILED_UNLOAD
         assert coordinator._closed is False
         assert coordinator._session.close.called is False
+        await coordinator.async_shutdown()
         await coordinator.async_close()
 
 
