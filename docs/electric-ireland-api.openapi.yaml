@@ -1,0 +1,665 @@
+openapi: 3.1.0
+info:
+  title: Electric Ireland Insights — MeterInsight API
+  version: 1.0.0
+  description: |
+    Reverse-engineered API specification for the Electric Ireland online account portal
+    (`youraccountonline.electricireland.ie`). These endpoints serve as a server-side proxy
+    to the Bidgely energy analytics platform and return JSON responses when called with a
+    valid authenticated session.
+
+    ## Overview
+
+    All data endpoints live under `/MeterInsight/{partnerId}/{contractId}/{premiseId}/`.
+    The three path parameters (partner, contract, premise) are opaque numeric identifiers
+    extracted from the Insights page HTML after login (see `electric-ireland-auth-reference.md`).
+
+    ## Authentication
+
+    Authentication is cookie-based. There is **no Bearer token, API key, or OAuth flow**.
+    A valid session is established by completing the HTML form-based login at the portal root
+    and navigating to the Insights page. The resulting session cookies must be sent with every
+    API request.
+
+    Required cookies (all `HttpOnly`, `Secure`):
+    - `.AspNetCore.Session` — ASP.NET Core session identifier
+    - `EI.RP` — Electric Ireland session marker (`max-age=1200`)
+    - `rvt` — CSRF token (rotated on each response)
+    - `ARRAffinity` / `ARRAffinitySameSite` — Azure load-balancer affinity
+
+    ## Session Expiry
+
+    Sessions expire after approximately **10–20 minutes** of inactivity. Each successful API
+    call resets the timer via a `ResetSessionExpiry()` mechanism on the server side.
+
+    **Critical**: An expired session returns **HTTP 200** with `Content-Type: text/html`
+    (the login page). It does **not** return 401 or 403. Consumers must detect expiry by
+    inspecting the `Content-Type` response header.
+
+    ## Backend
+
+    The EI server proxies requests to the **Bidgely** energy analytics platform
+    (`api.eu.bidgely.com` in production). The proxy is opaque — consumers never interact
+    with Bidgely directly.
+
+  contact:
+    name: Electric Ireland Insights HA Integration
+    url: https://github.com/marcosvr/Home-Assistant-Electric-Ireland
+
+servers:
+  - url: https://youraccountonline.electricireland.ie
+    description: Electric Ireland Online Account Portal
+
+tags:
+  - name: Billing
+    description: Billing period metadata
+  - name: Usage
+    description: Energy consumption and cost data
+  - name: Appliances
+    description: Bidgely AI-powered appliance disaggregation
+
+# ---------------------------------------------------------------------------
+# Shared path parameters
+# ---------------------------------------------------------------------------
+components:
+  parameters:
+    partnerId:
+      name: partnerId
+      in: path
+      required: true
+      description: |
+        Bidgely partner identifier. A numeric string (e.g. `7006723196`).
+        Extracted from the `data-partner` attribute of `<div id="modelData">` on the
+        Insights page.
+      schema:
+        type: string
+        pattern: '^\d+$'
+        example: '7006723196'
+
+    contractId:
+      name: contractId
+      in: path
+      required: true
+      description: |
+        Bidgely contract identifier. A numeric string (e.g. `1502212609`).
+        Extracted from the `data-contract` attribute of `<div id="modelData">`.
+      schema:
+        type: string
+        pattern: '^\d+$'
+        example: '1502212609'
+
+    premiseId:
+      name: premiseId
+      in: path
+      required: true
+      description: |
+        Bidgely premise identifier. A numeric string (e.g. `63353984`).
+        Extracted from the `data-premise` attribute of `<div id="modelData">`.
+      schema:
+        type: string
+        pattern: '^\d+$'
+        example: '63353984'
+
+  # -------------------------------------------------------------------------
+  # Reusable schemas
+  # -------------------------------------------------------------------------
+  schemas:
+    TariffBucket:
+      type: object
+      nullable: true
+      description: |
+        Cost and consumption for a single tariff period. `null` when no data exists
+        for this tariff in the given time window. Which buckets are populated depends
+        on the customer's tariff plan.
+      properties:
+        cost:
+          type: number
+          format: double
+          description: Cost in EUR (inclusive of VAT, exclusive of standing charges, PSO levy, and discounts).
+          example: 9.24
+        consumption:
+          type: number
+          format: double
+          description: Energy consumed in kWh.
+          example: 24.951
+      required:
+        - cost
+        - consumption
+
+    UsageDatapoint:
+      type: object
+      description: |
+        A single usage datapoint covering a time window. Contains tariff-bucketed
+        cost and consumption. All tariff fields are nullable — a `null` bucket means
+        no consumption was recorded for that tariff in this window.
+      properties:
+        startDate:
+          type: string
+          format: date-time
+          description: Start of the measurement window (UTC, ISO 8601).
+          example: '2026-03-28T00:00:00Z'
+        endDate:
+          type: string
+          format: date-time
+          description: End of the measurement window (UTC, ISO 8601).
+          example: '2026-03-28T23:59:59Z'
+        offPeak:
+          $ref: '#/components/schemas/TariffBucket'
+        midPeak:
+          $ref: '#/components/schemas/TariffBucket'
+        onPeak:
+          $ref: '#/components/schemas/TariffBucket'
+        flatRate:
+          $ref: '#/components/schemas/TariffBucket'
+        categories:
+          type: object
+          nullable: true
+          description: |
+            Additional categorisation. Observed as `null` in all captured responses.
+            Purpose unknown — possibly reserved for future tariff structures.
+      required:
+        - startDate
+        - endDate
+        - offPeak
+        - midPeak
+        - onPeak
+        - flatRate
+        - categories
+
+    BillPeriod:
+      type: object
+      description: A single billing period with date boundaries and metadata.
+      properties:
+        startDate:
+          type: string
+          format: date-time
+          description: Billing period start (UTC, ISO 8601).
+          example: '2026-03-26T00:00:00Z'
+        endDate:
+          type: string
+          format: date-time
+          description: Billing period end (UTC, ISO 8601).
+          example: '2026-04-25T22:59:59Z'
+        current:
+          type: boolean
+          description: '`true` for the current (in-progress) billing period.'
+          example: true
+        hasAppliance:
+          type: boolean
+          description: |
+            Whether Bidgely appliance disaggregation data is available for this period.
+            Typically `false` for the current (incomplete) period and `true` for completed
+            periods.
+          example: false
+      required:
+        - startDate
+        - endDate
+        - current
+        - hasAppliance
+
+    Appliance:
+      type: object
+      description: |
+        Consumption and cost attributed to a single appliance category by Bidgely's
+        AI disaggregation engine. Values are rounded integers except for the `total`
+        category cost which may include decimals.
+      properties:
+        category:
+          type: string
+          description: |
+            Appliance category identifier. Known values:
+            `spaceHeating`, `alwaysOn`, `waterHeating`, `refrigeration`,
+            `cooking`, `entertainment`, `lighting`, `laundry`, `other`, `total`.
+          enum:
+            - spaceHeating
+            - alwaysOn
+            - waterHeating
+            - refrigeration
+            - cooking
+            - entertainment
+            - lighting
+            - laundry
+            - other
+            - total
+          example: spaceHeating
+        consumption:
+          type: number
+          format: double
+          description: Estimated energy consumed by this appliance category (kWh).
+          example: 226
+        cost:
+          type: number
+          format: double
+          description: Estimated cost for this appliance category (EUR).
+          example: 72
+      required:
+        - category
+        - consumption
+        - cost
+
+    AppliancePeriod:
+      type: object
+      description: Appliance breakdown for a single completed billing period.
+      properties:
+        billStartDate:
+          type: string
+          format: date-time
+          description: Billing period start (UTC, ISO 8601).
+          example: '2026-02-26T00:00:00Z'
+        billEndDate:
+          type: string
+          format: date-time
+          description: Billing period end (UTC, ISO 8601).
+          example: '2026-03-25T23:59:59Z'
+        appliances:
+          type: array
+          description: |
+            List of appliance categories with consumption/cost. Always includes a
+            `total` entry as the last item.
+          items:
+            $ref: '#/components/schemas/Appliance'
+      required:
+        - billStartDate
+        - billEndDate
+        - appliances
+
+    SuccessResponse:
+      type: object
+      description: Common envelope for successful JSON responses.
+      properties:
+        subStatusCode:
+          type: string
+          description: Internal status code. Always `"SUCCESS"` on success.
+          example: SUCCESS
+        isSuccess:
+          type: boolean
+          description: '`true` when the request succeeded.'
+          example: true
+        message:
+          type: string
+          description: Human-readable status message (may contain typos from upstream).
+          example: 'Successfully executed query for query Uasge hourly'
+      required:
+        - subStatusCode
+        - isSuccess
+        - message
+
+    ErrorResponse:
+      type: object
+      description: |
+        Error envelope. **Note**: Error responses use **PascalCase** property names
+        (`SubStatusCode`, `IsSuccess`, `Message`) while success responses use
+        **camelCase** (`subStatusCode`, `isSuccess`, `message`). Consumers should
+        handle both casings.
+      properties:
+        SubStatusCode:
+          type: string
+          description: Internal error sub-status. Observed value `"None"`.
+          example: 'None'
+        IsSuccess:
+          type: boolean
+          description: '`false` for errors.'
+          example: false
+        Message:
+          type: string
+          description: Human-readable error description.
+          example: 'Invalid date range. Start date is greater than end date.'
+      required:
+        - SubStatusCode
+        - IsSuccess
+        - Message
+
+    SessionExpiredResponse:
+      description: |
+        **Not a JSON response.** When the session has expired, ALL endpoints return
+        `HTTP 200` with `Content-Type: text/html; charset=utf-8` containing the full
+        HTML login page. This is **indistinguishable by status code** from a valid
+        response — consumers MUST check the `Content-Type` header.
+
+  # -------------------------------------------------------------------------
+  # Security
+  # -------------------------------------------------------------------------
+  securitySchemes:
+    sessionCookies:
+      type: apiKey
+      in: cookie
+      name: .AspNetCore.Session
+      description: |
+        ASP.NET Core session cookie. Obtained after successful form-based login
+        and navigation to the Insights page. Must be accompanied by `EI.RP`,
+        `rvt`, and `ARRAffinity` cookies (automatically managed by the cookie jar).
+
+security:
+  - sessionCookies: []
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+paths:
+  /MeterInsight/{partnerId}/{contractId}/{premiseId}/bill-period:
+    get:
+      operationId: getBillPeriods
+      tags: [Billing]
+      summary: List all billing periods
+      description: |
+        Returns all available billing periods for this meter, ordered chronologically.
+        Each period includes start/end dates and whether appliance disaggregation data
+        is available.
+
+        Use this endpoint to:
+        - Determine the date boundaries for `usage-daily` and `appliance-usage` queries
+        - Identify which periods have appliance data (`hasAppliance: true`)
+        - Find the current (in-progress) billing period
+
+        **Observed data range**: Up to ~12 months of billing periods.
+      parameters:
+        - $ref: '#/components/parameters/partnerId'
+        - $ref: '#/components/parameters/contractId'
+        - $ref: '#/components/parameters/premiseId'
+      responses:
+        '200':
+          description: Successful response with billing periods.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/BillPeriod'
+                    required:
+                      - data
+              example:
+                subStatusCode: SUCCESS
+                isSuccess: true
+                message: Successfully executed query for query BillPeriod
+                data:
+                  - startDate: '2025-04-06T23:00:00Z'
+                    endDate: '2025-06-01T22:59:59Z'
+                    current: false
+                    hasAppliance: true
+                  - startDate: '2026-03-26T00:00:00Z'
+                    endDate: '2026-04-25T22:59:59Z'
+                    current: true
+                    hasAppliance: false
+            text/html:
+              schema:
+                $ref: '#/components/schemas/SessionExpiredResponse'
+
+  /MeterInsight/{partnerId}/{contractId}/{premiseId}/usage-daily:
+    get:
+      operationId: getUsageDaily
+      tags: [Usage]
+      summary: Get daily usage for a date range
+      description: |
+        Returns daily-granularity usage data (cost and consumption) broken down by tariff
+        buckets. Each entry covers one calendar day.
+
+        **Important behavioural notes**:
+        - The API appears to return data only within a **single billing period boundary**.
+          A request spanning multiple billing periods may return data only for the most
+          recent period. Use `/bill-period` to get exact date ranges and query per-period.
+        - Days without data have all tariff buckets set to `null`.
+        - Missing or empty query parameters return `200` with body `""` (literal empty
+          string, not valid JSON array).
+        - Swapped `start` > `end` returns `422` with a structured error.
+      parameters:
+        - $ref: '#/components/parameters/partnerId'
+        - $ref: '#/components/parameters/contractId'
+        - $ref: '#/components/parameters/premiseId'
+        - name: start
+          in: query
+          required: true
+          description: Start date (inclusive). Format `YYYY-MM-DD`.
+          schema:
+            type: string
+            format: date
+            example: '2026-03-26'
+        - name: end
+          in: query
+          required: true
+          description: End date (inclusive). Format `YYYY-MM-DD`.
+          schema:
+            type: string
+            format: date
+            example: '2026-04-25'
+      responses:
+        '200':
+          description: |
+            Successful response with daily usage data. Contains one entry per day in
+            the requested range. Days without available data have all tariff fields
+            set to `null`.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/UsageDatapoint'
+                    required:
+                      - data
+              example:
+                subStatusCode: SUCCESS
+                isSuccess: true
+                message: 'Successfully executed query for query Uasge daily'
+                data:
+                  - startDate: '2026-03-26T00:00:00Z'
+                    endDate: '2026-03-26T23:59:59Z'
+                    midPeak:
+                      cost: 9.24
+                      consumption: 24.951
+                    offPeak:
+                      cost: 1.71
+                      consumption: 8.808
+                    onPeak:
+                      cost: 1.2
+                      consumption: 3.048
+                    flatRate: null
+                    categories: null
+                  - startDate: '2026-03-30T23:00:00Z'
+                    endDate: '2026-03-31T22:59:59Z'
+                    midPeak: null
+                    offPeak: null
+                    onPeak: null
+                    flatRate: null
+                    categories: null
+            text/html:
+              schema:
+                $ref: '#/components/schemas/SessionExpiredResponse'
+        '422':
+          description: Invalid date range (e.g. start date after end date).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                SubStatusCode: 'None'
+                IsSuccess: false
+                Message: 'Invalid date range. Start date is greater than end date.'
+
+  /MeterInsight/{partnerId}/{contractId}/{premiseId}/hourly-usage:
+    get:
+      operationId: getHourlyUsage
+      tags: [Usage]
+      summary: Get hourly usage for a single day
+      description: |
+        Returns 24 hourly-granularity usage entries for a single calendar day, each
+        broken down by tariff buckets.
+
+        **This is the most forgiving endpoint**:
+        - Future dates or dates before the smart meter was installed return `204 No Content`.
+        - Invalid date formats or missing `date` parameter return `200` with body `""`.
+        - No-data scenarios never redirect to the login page (unlike other endpoints).
+
+        **Note**: There is no range-based variant — only single-day queries via the `date`
+        parameter. For multi-day hourly data, issue one request per day sequentially (the
+        upstream Bidgely API is rate-sensitive).
+      parameters:
+        - $ref: '#/components/parameters/partnerId'
+        - $ref: '#/components/parameters/contractId'
+        - $ref: '#/components/parameters/premiseId'
+        - name: date
+          in: query
+          required: true
+          description: Date to retrieve hourly usage for. Format `YYYY-MM-DD`.
+          schema:
+            type: string
+            format: date
+            example: '2026-03-28'
+      responses:
+        '200':
+          description: |
+            Successful response with 24 hourly entries (one per hour, 00:00–23:00).
+            Hours without data have all tariff fields set to `null`.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        description: Exactly 24 entries for a full day of data.
+                        minItems: 24
+                        maxItems: 24
+                        items:
+                          $ref: '#/components/schemas/UsageDatapoint'
+                    required:
+                      - data
+              example:
+                isSuccess: true
+                message: 'Successfully executed query for query Uasge hourly'
+                data:
+                  - startDate: '2026-03-28T00:00:00Z'
+                    endDate: '2026-03-28T00:59:59Z'
+                    offPeak:
+                      cost: 0.2
+                      consumption: 1.004
+                    midPeak: null
+                    onPeak: null
+                    flatRate: null
+                    categories: null
+            text/html:
+              schema:
+                $ref: '#/components/schemas/SessionExpiredResponse'
+        '204':
+          description: |
+            No data available for the requested date. This is the normal response for
+            future dates, dates before smart meter activation, and dates where ESB has
+            not yet published data (typically 1–3 days delay).
+          headers:
+            Content-Type:
+              schema:
+                type: string
+                example: application/json
+
+  /MeterInsight/{partnerId}/{contractId}/{premiseId}/appliance-usage:
+    get:
+      operationId: getApplianceUsage
+      tags: [Appliances]
+      summary: Get appliance-level usage breakdown
+      description: |
+        Returns Bidgely AI-powered appliance disaggregation for the requested date range.
+        The response breaks total consumption into estimated per-appliance categories.
+
+        **Requirements**:
+        - Only returns data for **completed** billing periods (`hasAppliance: true` in
+          `/bill-period` response).
+        - The `start` and `end` parameters should match a billing period's boundaries
+          from the `/bill-period` response.
+        - Missing parameters return `200` with HTML (login page redirect).
+
+        **Known appliance categories** (from Bidgely's disaggregation engine):
+        `spaceHeating`, `alwaysOn`, `waterHeating`, `refrigeration`, `cooking`,
+        `entertainment`, `lighting`, `laundry`, `other`, `total`.
+
+        The `total` category is always present as the last entry and represents the
+        sum across all other categories.
+      parameters:
+        - $ref: '#/components/parameters/partnerId'
+        - $ref: '#/components/parameters/contractId'
+        - $ref: '#/components/parameters/premiseId'
+        - name: start
+          in: query
+          required: true
+          description: Billing period start date (inclusive). Format `YYYY-MM-DD`.
+          schema:
+            type: string
+            format: date
+            example: '2026-02-26'
+        - name: end
+          in: query
+          required: true
+          description: Billing period end date (inclusive). Format `YYYY-MM-DD`.
+          schema:
+            type: string
+            format: date
+            example: '2026-03-25'
+      responses:
+        '200':
+          description: |
+            Successful response with appliance breakdown. Contains one entry per
+            billing period in the requested range. Each entry lists all appliance
+            categories with estimated consumption and cost.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/AppliancePeriod'
+                    required:
+                      - data
+              example:
+                subStatusCode: SUCCESS
+                isSuccess: true
+                message: 'Successfully executed query for query Appliance Uasge'
+                data:
+                  - billStartDate: '2026-02-26T00:00:00Z'
+                    billEndDate: '2026-03-25T23:59:59Z'
+                    appliances:
+                      - category: spaceHeating
+                        consumption: 226
+                        cost: 72
+                      - category: alwaysOn
+                        consumption: 46
+                        cost: 14
+                      - category: waterHeating
+                        consumption: 45
+                        cost: 14
+                      - category: refrigeration
+                        consumption: 30
+                        cost: 10
+                      - category: cooking
+                        consumption: 9
+                        cost: 3
+                      - category: entertainment
+                        consumption: 8
+                        cost: 3
+                      - category: lighting
+                        consumption: 7
+                        cost: 2
+                      - category: laundry
+                        consumption: 7
+                        cost: 2
+                      - category: other
+                        consumption: 28
+                        cost: 9
+                      - category: total
+                        consumption: 406
+                        cost: 129.04
+            text/html:
+              schema:
+                $ref: '#/components/schemas/SessionExpiredResponse'

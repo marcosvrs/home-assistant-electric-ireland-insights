@@ -19,11 +19,6 @@ from homeassistant.helpers.translation import async_get_translations
 from pytest_homeassistant_custom_component.components.recorder.common import async_wait_recording_done
 
 from custom_components.electric_ireland_insights import (
-    _migrate_legacy_config_entry_identity,
-    _migrate_legacy_device,
-    _migrate_legacy_discount_to_options,
-    _migrate_legacy_entity_ids,
-    _migrate_legacy_repair_issues,
     async_migrate_entry,
     async_setup,
     async_setup_entry,
@@ -34,6 +29,13 @@ from custom_components.electric_ireland_insights.const import (
     DOMAIN,
     NAME,
     hash_account_id,
+)
+from custom_components.electric_ireland_insights.identity_migration import (
+    _migrate_legacy_config_entry_identity,
+    _migrate_legacy_device,
+    _migrate_legacy_discount_to_options,
+    _migrate_legacy_entity_ids,
+    _migrate_legacy_repair_issues,
 )
 
 TEST_METER_IDS = {"partner": "P1", "contract": "C1", "premise": "PR1"}
