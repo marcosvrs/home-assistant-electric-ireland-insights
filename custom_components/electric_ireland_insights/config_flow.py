@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
-import probatio as vol
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
@@ -22,6 +21,16 @@ from .const import (
     hash_account_id,
 )
 from .exceptions import AccountNotFound, CannotConnect, InvalidAuth
+
+if TYPE_CHECKING:
+    import probatio as vol
+else:
+    try:
+        import probatio as vol
+    except ModuleNotFoundError as err:
+        if err.name != "probatio":
+            raise
+        import voluptuous as vol
 
 _LOGGER = logging.getLogger(__name__)
 

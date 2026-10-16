@@ -12,6 +12,7 @@ from homeassistant.exceptions import ConfigEntryError
 from homeassistant.helpers.device_registry import (
     DeviceEntry,
     DeviceRegistry,
+    async_entries_for_config_entry,
 )
 from homeassistant.helpers.device_registry import async_get as async_get_device_registry
 from homeassistant.helpers.entity_registry import (
@@ -106,13 +107,12 @@ def _transfer_duplicate_registry_ownership(
     """Transfer duplicate registry ownership before removing the entry."""
     device_registry = async_get_device_registry(hass)
     moved_device_ids: list[str] = []
-    for device in tuple(device_registry.devices):
-        if device.config_entry_id == duplicate_entry.entry_id:
-            device_registry.async_update_device(
-                device.id,
-                new_config_entry_id=entry.entry_id,
-            )
-            moved_device_ids.append(device.id)
+    for device in async_entries_for_config_entry(device_registry, duplicate_entry.entry_id):
+        device_registry.async_update_device(
+            device.id,
+            new_config_entry_id=entry.entry_id,
+        )
+        moved_device_ids.append(device.id)
 
     entity_registry = async_get_entity_registry(hass)
     moved_entity_ids: list[str] = []
@@ -264,18 +264,16 @@ def _migrate_legacy_device(hass: HomeAssistant, entry: ElectricIrelandConfigEntr
     account = entry.data["account_number"]
     account_identifier = (DOMAIN, account)
     hashed_identifier = (DOMAIN, hash_account_id(account))
-    legacy_device = next(
-        (device for device in device_registry.devices if account_identifier in device.identifiers), None
-    )
+    legacy_devices = device_registry.async_get_devices(identifiers={account_identifier})
+    legacy_device = next(iter(legacy_devices), None)
     if legacy_device is None:
         return
     if legacy_device.config_entry_id != entry.entry_id:
         _LOGGER.warning("Could not migrate legacy device: device belongs to another entry")
         return
 
-    hashed_device = next(
-        (device for device in device_registry.devices if hashed_identifier in device.identifiers), None
-    )
+    hashed_devices = device_registry.async_get_devices(identifiers={hashed_identifier})
+    hashed_device = next(iter(hashed_devices), None)
     if hashed_device is not None and hashed_device.id != legacy_device.id:
         if legacy_device.config_entry_id == entry.entry_id and hashed_device.config_entry_id == entry.entry_id:
             entity_registry = async_get_entity_registry(hass)
@@ -301,10 +299,6 @@ def _migrate_legacy_device(hass: HomeAssistant, entry: ElectricIrelandConfigEntr
             _LOGGER.info("Merged duplicate legacy device into privacy-safe device")
         else:
             _LOGGER.warning("Could not migrate legacy device: privacy-safe identifier is already in use")
-        return
-
-    if legacy_device.config_entry_id != entry.entry_id:
-        _LOGGER.warning("Could not migrate legacy device: device is shared with another entry")
         return
 
     new_name = legacy_device.name.replace(account, hashed_identifier[1]) if legacy_device.name else None

@@ -38,7 +38,7 @@ from custom_components.electric_ireland_insights.const import (
 
 
 def _device_by_identifier(registry, identifier):
-    return next((device for device in registry.devices if identifier in device.identifiers), None)
+    return next(iter(registry.async_get_devices(identifiers={identifier})), None)
 
 
 TEST_METER_IDS = {"partner": "P1", "contract": "C1", "premise": "PR1"}
