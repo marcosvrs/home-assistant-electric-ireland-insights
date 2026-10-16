@@ -25,7 +25,7 @@ Home Assistant custom integration (HACS) for **Electric Ireland Insights**. Scra
 
 | Task | Location | Notes |
 |------|----------|-------|
-| Integration source | `custom_components/electric_ireland_insights/` | 14 files, see sub-AGENTS.md |
+| Integration source | `custom_components/electric_ireland_insights/` | Integration modules; see sub-AGENTS.md |
 | Tests | `tests/` | 12 test files + 2 conftest, see sub-AGENTS.md |
 | CI pipeline | `.github/workflows/validate.yml` | hassfest, HACS, ruff, mypy, pytest --cov-fail-under=99 |
 | HA-format docs | `docs/index.md` | For home-assistant.io submission |

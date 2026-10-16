@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Literal
 
 import aiohttp
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlowResult
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 
 from .api import ElectricIrelandAPI
@@ -21,6 +23,7 @@ from .const import (
     hash_account_id,
 )
 from .exceptions import AccountNotFound, CannotConnect, InvalidAuth
+from .types import MeterIds
 
 if TYPE_CHECKING:
     import probatio as vol
@@ -40,6 +43,44 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Required("password"): str,
     }
 )
+
+type CredentialValidationError = Literal["invalid_auth", "cannot_connect", "account_not_found"]
+
+
+@dataclass(frozen=True)
+class CredentialValidationResult:
+    """Normalized outcome from checking an account's credentials."""
+
+    meter_ids: MeterIds | None
+    error: CredentialValidationError | None
+
+
+async def _async_validate_account_credentials(
+    hass: HomeAssistant,
+    username: str,
+    password: str,
+    account_number: str,
+    *,
+    flow_name: str,
+) -> CredentialValidationResult:
+    """Validate credentials and normalize provider errors for config flows."""
+    try:
+        async with (
+            _get_api_lock(),
+            async_create_clientsession(hass, cookie_jar=aiohttp.CookieJar()) as session,
+        ):
+            api = ElectricIrelandAPI(username, password, account_number)
+            meter_ids = await api.validate_credentials(session)
+    except InvalidAuth:
+        return CredentialValidationResult(None, "invalid_auth")
+    except CannotConnect:
+        return CredentialValidationResult(None, "cannot_connect")
+    except AccountNotFound:
+        return CredentialValidationResult(None, "account_not_found")
+    except Exception:
+        _LOGGER.exception("Unexpected exception during %s", flow_name)
+        return CredentialValidationResult(None, "cannot_connect")
+    return CredentialValidationResult(meter_ids, None)
 
 
 class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -118,29 +159,19 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
         )
 
     async def _finish_flow(self, account_number: str) -> ConfigFlowResult:
-        try:
-            async with (
-                _get_api_lock(),
-                async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar()) as session,
-            ):
-                api = ElectricIrelandAPI(
-                    self._username,
-                    self._password,
-                    account_number,
-                )
-                meter_ids = await api.validate_credentials(session)
-        except InvalidAuth:
-            return self.async_abort(reason="invalid_auth")
-        except CannotConnect:
-            return self.async_abort(reason="cannot_connect")
-        except AccountNotFound:
-            return self.async_abort(reason="account_not_found")
-        except Exception:
-            _LOGGER.exception("Unexpected exception during account setup")
-            return self.async_abort(reason="cannot_connect")
+        result = await _async_validate_account_credentials(
+            self.hass,
+            self._username,
+            self._password,
+            account_number,
+            flow_name="account setup",
+        )
+        if result.error is not None:
+            return self.async_abort(reason=result.error)
 
+        assert result.meter_ids is not None
         self._account_number = account_number
-        self._meter_ids = meter_ids
+        self._meter_ids = result.meter_ids
         _LOGGER.debug("Account %s validated, proceeding to options", _redact_id(account_number))
         return await self.async_step_options()
 
@@ -188,39 +219,28 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
 
         if user_input is not None:
             new_data = {**reauth_entry.data, "password": user_input["password"]}
-            try:
-                async with (
-                    _get_api_lock(),
-                    async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar()) as session,
-                ):
-                    api = ElectricIrelandAPI(
-                        new_data["username"],
-                        new_data["password"],
-                        new_data["account_number"],
-                    )
-                    meter_ids = await api.validate_credentials(session)
-            except InvalidAuth:
-                errors["base"] = "invalid_auth"
-            except CannotConnect:
-                errors["base"] = "cannot_connect"
-            except AccountNotFound:
-                errors["base"] = "account_not_found"
-            except Exception:
-                _LOGGER.exception("Unexpected exception during reauth")
-                errors["base"] = "cannot_connect"
+            result = await _async_validate_account_credentials(
+                self.hass,
+                new_data["username"],
+                new_data["password"],
+                new_data["account_number"],
+                flow_name="reauth",
+            )
+            if result.error is not None:
+                errors["base"] = result.error
             else:
+                assert result.meter_ids is not None
                 await self.async_set_unique_id(hash_account_id(new_data["account_number"]))
                 self._abort_if_unique_id_mismatch()
                 return self.async_update_reload_and_abort(
                     reauth_entry,
                     data={
                         **new_data,
-                        "partner_id": meter_ids.get("partner"),
-                        "contract_id": meter_ids.get("contract"),
-                        "premise_id": meter_ids.get("premise"),
+                        "partner_id": result.meter_ids.get("partner"),
+                        "contract_id": result.meter_ids.get("contract"),
+                        "premise_id": result.meter_ids.get("premise"),
                     },
                 )
-
         return self.async_show_form(
             step_id="reauth_confirm",
             data_schema=vol.Schema({vol.Required("password"): str}),
@@ -236,27 +256,17 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
             password = user_input["password"]
             force_rediscovery = user_input.get("force_rediscovery", False)
 
-            try:
-                async with (
-                    _get_api_lock(),
-                    async_create_clientsession(self.hass, cookie_jar=aiohttp.CookieJar()) as session,
-                ):
-                    api = ElectricIrelandAPI(
-                        username,
-                        password,
-                        entry.data["account_number"],
-                    )
-                    meter_ids = await api.validate_credentials(session)
-            except InvalidAuth:
-                errors["base"] = "invalid_auth"
-            except CannotConnect:
-                errors["base"] = "cannot_connect"
-            except AccountNotFound:
-                errors["base"] = "account_not_found"
-            except Exception:
-                _LOGGER.exception("Unexpected exception during reconfigure")
-                errors["base"] = "cannot_connect"
+            result = await _async_validate_account_credentials(
+                self.hass,
+                username,
+                password,
+                entry.data["account_number"],
+                flow_name="reconfigure",
+            )
+            if result.error is not None:
+                errors["base"] = result.error
             else:
+                assert result.meter_ids is not None
                 password_changed = password != entry.data["password"]
                 import_full_history = user_input.get("import_full_history", False)
                 if force_rediscovery or password_changed:
@@ -272,9 +282,9 @@ class ElectricIrelandInsightsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN
                     new_data = {
                         **entry.data,
                         "password": password,
-                        "partner_id": meter_ids.get("partner"),
-                        "contract_id": meter_ids.get("contract"),
-                        "premise_id": meter_ids.get("premise"),
+                        "partner_id": result.meter_ids.get("partner"),
+                        "contract_id": result.meter_ids.get("contract"),
+                        "premise_id": result.meter_ids.get("premise"),
                         "import_full_history": import_full_history,
                     }
                 return self.async_update_reload_and_abort(entry, data=new_data)
