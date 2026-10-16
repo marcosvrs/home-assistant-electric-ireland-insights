@@ -1,9 +1,12 @@
 # pyright: reportMissingImports=false
 
 import importlib
+from types import SimpleNamespace
 from typing import Protocol, cast
 from unittest.mock import AsyncMock, patch
 
+import aiohttp
+import aioresponses.core as aioresponses_core
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -35,6 +38,20 @@ def _disable_pycares_shutdown_manager() -> None:
 
 
 _disable_pycares_shutdown_manager()
+
+
+@pytest.fixture(autouse=True)
+def patch_aioresponses_aiohttp_compatibility(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Supply aiohttp 3.14's new response writer argument to aioresponses."""
+    if tuple(map(int, aiohttp.__version__.split(".")[:2])) < (3, 14):
+        return
+
+    class CompatibleClientResponse(aiohttp.ClientResponse):
+        def __init__(self, *args, **kwargs):
+            kwargs.setdefault("stream_writer", SimpleNamespace(output_size=0))
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(aioresponses_core, "ClientResponse", CompatibleClientResponse)
 
 
 SAMPLE_DATAPOINTS = [

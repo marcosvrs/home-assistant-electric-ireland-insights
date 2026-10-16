@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
 import pytest
-from aioresponses import aioresponses as aioresponses_mock
+from aioresponses import aioresponses
 from bs4 import BeautifulSoup
 
 _HA_STUBS = [
@@ -109,7 +109,7 @@ async def test_redact_id_handles_empty_and_short_values() -> None:
 async def test_meter_insight_client_parses_response() -> None:
     meter_ids = {"partner": "P1", "contract": "C1", "premise": "PR1"}
 
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         url = f"{BASE_URL}/MeterInsight/P1/C1/PR1/hourly-usage?date=2026-03-23"
         m.get(
             url,
@@ -179,7 +179,7 @@ _INVALID_LOGIN_HTML = """<html><body>
 
 async def test_login_success() -> None:
     api = ElectricIrelandAPI("user@test.com", "pass123", "100000001")
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(f"{BASE_URL}/", status=200, body=_LOGIN_PAGE_HTML, headers={"Set-Cookie": "rvt=mock_rvt_token; Path=/"})
         m.post(f"{BASE_URL}/", status=200, body=_DASHBOARD_HTML)
         m.post(f"{BASE_URL}/Accounts/OnEvent", status=200, body=_INSIGHTS_HTML)
@@ -223,7 +223,7 @@ async def test_login_success() -> None:
 async def test_login_missing_source_token(caplog) -> None:
     caplog.set_level(logging.DEBUG, logger="custom_components.electric_ireland_insights.api")
     api = ElectricIrelandAPI("user@test.com", "pass123", "100000001")
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(
             f"{BASE_URL}/",
             status=200,
@@ -238,7 +238,7 @@ async def test_login_missing_source_token(caplog) -> None:
 
 async def test_login_missing_rvt_cookie() -> None:
     api = ElectricIrelandAPI("user@test.com", "pass123", "100000001")
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(f"{BASE_URL}/", status=200, body=_LOGIN_PAGE_HTML)
         async with aiohttp.ClientSession() as session:
             with pytest.raises(CannotConnect):
@@ -247,7 +247,7 @@ async def test_login_missing_rvt_cookie() -> None:
 
 async def test_login_account_not_found() -> None:
     api = ElectricIrelandAPI("user@test.com", "pass123", "100000001")
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(f"{BASE_URL}/", status=200, body=_LOGIN_PAGE_HTML, headers={"Set-Cookie": "rvt=mock_rvt_token; Path=/"})
         m.post(f"{BASE_URL}/", status=200, body=_DASHBOARD_WRONG_ACCOUNT_HTML)
         async with aiohttp.ClientSession() as session:
@@ -257,7 +257,7 @@ async def test_login_account_not_found() -> None:
 
 async def test_login_no_model_data() -> None:
     api = ElectricIrelandAPI("user@test.com", "pass123", "100000001")
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(f"{BASE_URL}/", status=200, body=_LOGIN_PAGE_HTML, headers={"Set-Cookie": "rvt=mock_rvt_token; Path=/"})
         m.post(f"{BASE_URL}/", status=200, body=_DASHBOARD_HTML)
         m.post(f"{BASE_URL}/Accounts/OnEvent", status=200, body=_INSIGHTS_NO_MODEL_DATA_HTML)
@@ -268,7 +268,7 @@ async def test_login_no_model_data() -> None:
 
 async def test_login_missing_meter_ids() -> None:
     api = ElectricIrelandAPI("user@test.com", "pass123", "100000001")
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(f"{BASE_URL}/", status=200, body=_LOGIN_PAGE_HTML, headers={"Set-Cookie": "rvt=mock_rvt_token; Path=/"})
         m.post(f"{BASE_URL}/", status=200, body=_DASHBOARD_HTML)
         m.post(f"{BASE_URL}/Accounts/OnEvent", status=200, body=_INSIGHTS_EMPTY_IDS_HTML)
@@ -279,7 +279,7 @@ async def test_login_missing_meter_ids() -> None:
 
 async def test_login_invalid_credentials() -> None:
     api = ElectricIrelandAPI("user@test.com", "badpass", "100000001")
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(f"{BASE_URL}/", status=200, body=_LOGIN_PAGE_HTML, headers={"Set-Cookie": "rvt=mock_rvt_token; Path=/"})
         m.post(f"{BASE_URL}/", status=200, body=_INVALID_LOGIN_HTML)
         async with aiohttp.ClientSession() as session:
@@ -289,7 +289,7 @@ async def test_login_invalid_credentials() -> None:
 
 async def test_discover_accounts_invalid_credentials() -> None:
     api = ElectricIrelandAPI("user@test.com", "badpass")
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(f"{BASE_URL}/", status=200, body=_LOGIN_PAGE_HTML, headers={"Set-Cookie": "rvt=mock_rvt_token; Path=/"})
         m.post(f"{BASE_URL}/", status=200, body=_INVALID_LOGIN_HTML)
         async with aiohttp.ClientSession() as session:
@@ -319,7 +319,7 @@ async def test_login_skips_accounts_without_number_and_non_electric_target(caplo
       </form>
     </div>
     </body></html>"""
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(f"{BASE_URL}/", status=200, body=_LOGIN_PAGE_HTML, headers={"Set-Cookie": "rvt=mock_rvt_token; Path=/"})
         m.post(f"{BASE_URL}/", status=200, body=dashboard_html)
         m.post(f"{BASE_URL}/Accounts/OnEvent", status=200, body=_INSIGHTS_HTML)
@@ -339,7 +339,7 @@ async def test_login_rejects_non_tag_model_data() -> None:
             return object()
         return original_find(self, name, attrs, *args, **kwargs)
 
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(f"{BASE_URL}/", status=200, body=_LOGIN_PAGE_HTML, headers={"Set-Cookie": "rvt=mock_rvt_token; Path=/"})
         m.post(f"{BASE_URL}/", status=200, body=_DASHBOARD_HTML)
         m.post(f"{BASE_URL}/Accounts/OnEvent", status=200, body=_INSIGHTS_HTML)
@@ -365,7 +365,7 @@ async def test_login_rejects_non_string_model_data_attributes() -> None:
             return model_data_tag
         return original_find(self, name, attrs, *args, **kwargs)
 
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(f"{BASE_URL}/", status=200, body=_LOGIN_PAGE_HTML, headers={"Set-Cookie": "rvt=mock_rvt_token; Path=/"})
         m.post(f"{BASE_URL}/", status=200, body=_DASHBOARD_HTML)
         m.post(f"{BASE_URL}/Accounts/OnEvent", status=200, body=_INSIGHTS_HTML)
@@ -377,7 +377,7 @@ async def test_login_rejects_non_string_model_data_attributes() -> None:
 
 async def test_login_client_error() -> None:
     api = ElectricIrelandAPI("user@test.com", "pass123", "100000001")
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(f"{BASE_URL}/", exception=aiohttp.ClientError("network error"))
         async with aiohttp.ClientSession() as session:
             with pytest.raises(CannotConnect):
@@ -386,7 +386,7 @@ async def test_login_client_error() -> None:
 
 async def test_login_timeout() -> None:
     api = ElectricIrelandAPI("user@test.com", "pass123", "100000001")
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(f"{BASE_URL}/", exception=TimeoutError())
         async with aiohttp.ClientSession() as session:
             with pytest.raises(CannotConnect):
@@ -401,7 +401,7 @@ async def test_login_timeout() -> None:
 async def test_login_with_cached_ids_skips_insights_parsing() -> None:
     api = ElectricIrelandAPI("user@test.com", "pass123", "100000001")
     cached_ids = {"partner": "P1", "contract": "C1", "premise": "PR1"}
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(f"{BASE_URL}/", status=200, body=_LOGIN_PAGE_HTML, headers={"Set-Cookie": "rvt=mock_rvt_token; Path=/"})
         m.post(f"{BASE_URL}/", status=200, body=_DASHBOARD_HTML)
         m.post(f"{BASE_URL}/Accounts/OnEvent", status=200, body=_INSIGHTS_HTML)
@@ -414,7 +414,7 @@ async def test_login_with_cached_ids_skips_insights_parsing() -> None:
 
 async def test_login_without_cached_ids_discovers_from_insights() -> None:
     api = ElectricIrelandAPI("user@test.com", "pass123", "100000001")
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(f"{BASE_URL}/", status=200, body=_LOGIN_PAGE_HTML, headers={"Set-Cookie": "rvt=mock_rvt_token; Path=/"})
         m.post(f"{BASE_URL}/", status=200, body=_DASHBOARD_HTML)
         m.post(f"{BASE_URL}/Accounts/OnEvent", status=200, body=_INSIGHTS_HTML)
@@ -453,7 +453,7 @@ _DASHBOARD_NO_ACCOUNTS_HTML = "<html><body><p>Welcome</p></body></html>"
 
 async def test_discover_accounts_single() -> None:
     api = ElectricIrelandAPI("user@test.com", "pass123")
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(f"{BASE_URL}/", status=200, body=_LOGIN_PAGE_HTML, headers={"Set-Cookie": "rvt=mock_rvt_token; Path=/"})
         m.post(f"{BASE_URL}/", status=200, body=_DASHBOARD_HTML)
         async with aiohttp.ClientSession() as session:
@@ -464,7 +464,7 @@ async def test_discover_accounts_single() -> None:
 
 async def test_discover_accounts_multiple() -> None:
     api = ElectricIrelandAPI("user@test.com", "pass123")
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(f"{BASE_URL}/", status=200, body=_LOGIN_PAGE_HTML, headers={"Set-Cookie": "rvt=mock_rvt_token; Path=/"})
         m.post(f"{BASE_URL}/", status=200, body=_DASHBOARD_MULTI_ACCOUNT_HTML)
         async with aiohttp.ClientSession() as session:
@@ -477,7 +477,7 @@ async def test_discover_accounts_multiple() -> None:
 
 async def test_discover_accounts_no_accounts() -> None:
     api = ElectricIrelandAPI("user@test.com", "pass123")
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(f"{BASE_URL}/", status=200, body=_LOGIN_PAGE_HTML, headers={"Set-Cookie": "rvt=mock_rvt_token; Path=/"})
         m.post(f"{BASE_URL}/", status=200, body=_DASHBOARD_NO_ACCOUNTS_HTML)
         async with aiohttp.ClientSession() as session:
@@ -496,7 +496,7 @@ async def test_discover_accounts_skips_divs_without_account_number() -> None:
       <h2 class="account-electricity-icon"></h2>
     </div>
     </body></html>"""
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(f"{BASE_URL}/", status=200, body=_LOGIN_PAGE_HTML, headers={"Set-Cookie": "rvt=mock_rvt_token; Path=/"})
         m.post(f"{BASE_URL}/", status=200, body=dashboard_html)
         async with aiohttp.ClientSession() as session:
@@ -507,7 +507,7 @@ async def test_discover_accounts_skips_divs_without_account_number() -> None:
 
 async def test_discover_accounts_gas_only() -> None:
     api = ElectricIrelandAPI("user@test.com", "pass123")
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(f"{BASE_URL}/", status=200, body=_LOGIN_PAGE_HTML, headers={"Set-Cookie": "rvt=mock_rvt_token; Path=/"})
         m.post(f"{BASE_URL}/", status=200, body=_DASHBOARD_GAS_ONLY_HTML)
         async with aiohttp.ClientSession() as session:
@@ -517,7 +517,7 @@ async def test_discover_accounts_gas_only() -> None:
 
 async def test_discover_accounts_missing_tokens() -> None:
     api = ElectricIrelandAPI("user@test.com", "pass123")
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(f"{BASE_URL}/", status=200, body=_LOGIN_PAGE_NO_SOURCE)
         async with aiohttp.ClientSession() as session:
             with pytest.raises(CannotConnect):
@@ -534,7 +534,7 @@ async def test_get_data_401() -> None:
     meter_ids = {"partner": "P1", "contract": "C1", "premise": "PR1"}
     target_date = datetime(2026, 3, 23, tzinfo=UTC)
     url = f"{BASE_URL}/MeterInsight/P1/C1/PR1/hourly-usage?date=2026-03-23"
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(url, status=401)
         async with aiohttp.ClientSession() as session:
             client = MeterInsightClient(session, meter_ids)
@@ -547,7 +547,7 @@ async def test_get_data_403() -> None:
     meter_ids = {"partner": "P1", "contract": "C1", "premise": "PR1"}
     target_date = datetime(2026, 3, 23, tzinfo=UTC)
     url = f"{BASE_URL}/MeterInsight/P1/C1/PR1/hourly-usage?date=2026-03-23"
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(url, status=403)
         async with aiohttp.ClientSession() as session:
             client = MeterInsightClient(session, meter_ids)
@@ -561,7 +561,7 @@ async def test_get_data_non_json_response(caplog) -> None:
     meter_ids = {"partner": "P1", "contract": "C1", "premise": "PR1"}
     target_date = datetime(2026, 3, 23, tzinfo=UTC)
     url = f"{BASE_URL}/MeterInsight/P1/C1/PR1/hourly-usage?date=2026-03-23"
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(url, status=200, body="<html>Login page</html>", content_type="text/html")
         async with aiohttp.ClientSession() as session:
             client = MeterInsightClient(session, meter_ids)
@@ -575,7 +575,7 @@ async def test_get_data_is_success_false(caplog) -> None:
     meter_ids = {"partner": "P1", "contract": "C1", "premise": "PR1"}
     target_date = datetime(2026, 3, 23, tzinfo=UTC)
     url = f"{BASE_URL}/MeterInsight/P1/C1/PR1/hourly-usage?date=2026-03-23"
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(url, payload={"isSuccess": False, "message": "Error", "data": []}, content_type="application/json")
         async with aiohttp.ClientSession() as session:
             client = MeterInsightClient(session, meter_ids)
@@ -589,7 +589,7 @@ async def test_get_data_missing_end_date() -> None:
     target_date = datetime(2026, 3, 23, tzinfo=UTC)
     url = f"{BASE_URL}/MeterInsight/P1/C1/PR1/hourly-usage?date=2026-03-23"
     payload = {"isSuccess": True, "data": [{"flatRate": {"consumption": 0.5, "cost": 0.1}}]}
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(url, payload=payload, content_type="application/json")
         async with aiohttp.ClientSession() as session:
             client = MeterInsightClient(session, meter_ids)
@@ -601,7 +601,7 @@ async def test_get_data_invalid_json_raises_cannot_connect() -> None:
     meter_ids = {"partner": "P1", "contract": "C1", "premise": "PR1"}
     target_date = datetime(2026, 3, 23, tzinfo=UTC)
     url = f"{BASE_URL}/MeterInsight/P1/C1/PR1/hourly-usage?date=2026-03-23"
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(url, body="{not valid json", content_type="application/json")
         async with aiohttp.ClientSession() as session:
             client = MeterInsightClient(session, meter_ids)
@@ -626,7 +626,7 @@ async def test_get_data_multiple_tariff_keys_prefers_first_available_tariff(capl
             }
         ],
     }
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(url, payload=payload, content_type="application/json")
         async with aiohttp.ClientSession() as session:
             result = await MeterInsightClient(session, meter_ids).get_data(target_date)
@@ -655,7 +655,7 @@ async def test_get_bill_periods_legacy_success_key() -> None:
             }
         ],
     }
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(url, payload=payload, content_type="application/json")
         async with aiohttp.ClientSession() as session:
             result = await api.get_bill_periods(session, meter_ids)
@@ -666,7 +666,7 @@ async def test_get_bill_periods_timeout_raises_cannot_connect() -> None:
     api = ElectricIrelandAPI("user@test.com", "pass123", "100000001")
     meter_ids = {"partner": "P1", "contract": "C1", "premise": "PR1"}
     url = f"{BASE_URL}/MeterInsight/P1/C1/PR1/bill-period"
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(url, exception=TimeoutError())
         async with aiohttp.ClientSession() as session:
             with pytest.raises(CannotConnect, match="Connection timed out"):
@@ -678,7 +678,7 @@ async def test_get_data_invalid_date_string() -> None:
     target_date = datetime(2026, 3, 23, tzinfo=UTC)
     url = f"{BASE_URL}/MeterInsight/P1/C1/PR1/hourly-usage?date=2026-03-23"
     payload = {"isSuccess": True, "data": [{"endDate": "not-a-date", "flatRate": {"consumption": 0.5, "cost": 0.1}}]}
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(url, payload=payload, content_type="application/json")
         async with aiohttp.ClientSession() as session:
             client = MeterInsightClient(session, meter_ids)
@@ -690,7 +690,7 @@ async def test_get_data_client_error() -> None:
     meter_ids = {"partner": "P1", "contract": "C1", "premise": "PR1"}
     target_date = datetime(2026, 3, 23, tzinfo=UTC)
     url = f"{BASE_URL}/MeterInsight/P1/C1/PR1/hourly-usage?date=2026-03-23"
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(url, exception=aiohttp.ClientError("network error"))
         async with aiohttp.ClientSession() as session:
             client = MeterInsightClient(session, meter_ids)
@@ -702,7 +702,7 @@ async def test_discover_accounts_wraps_aiohttp_client_error() -> None:
     """aiohttp.ClientError in discover_accounts must become CannotConnect."""
     api = ElectricIrelandAPI("user@test.com", "password")
 
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(f"{BASE_URL}/", exception=aiohttp.ClientError("network down"))
         async with aiohttp.ClientSession() as session:
             with pytest.raises(CannotConnect):
@@ -714,7 +714,7 @@ async def test_discover_accounts_wraps_timeout() -> None:
 
     api = ElectricIrelandAPI("user@test.com", "password")
 
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(f"{BASE_URL}/", exception=TimeoutError())
         async with aiohttp.ClientSession() as session:
             with pytest.raises(CannotConnect):
@@ -731,7 +731,7 @@ async def test_get_data_204_returns_empty_list() -> None:
     meter_ids = {"partner": "P1", "contract": "C1", "premise": "PR1"}
     target_date = datetime(2026, 3, 23, tzinfo=UTC)
     url = f"{BASE_URL}/MeterInsight/P1/C1/PR1/hourly-usage?date=2026-03-23"
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(url, status=204)
         async with aiohttp.ClientSession() as session:
             client = MeterInsightClient(session, meter_ids)
@@ -748,7 +748,7 @@ async def test_authenticate_with_cached_ids() -> None:
     """authenticate() with cached IDs returns (cached_ids, None)."""
     api = ElectricIrelandAPI("user@test.com", "pass123", "100000001")
     cached_ids = {"partner": "P1", "contract": "C1", "premise": "PR1"}
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(
             f"{BASE_URL}/",
             status=200,
@@ -770,7 +770,7 @@ async def test_authenticate_full_discovery() -> None:
         "contract": "CONTRACT1",
         "premise": "PREMISE1",
     }
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(
             f"{BASE_URL}/",
             status=200,
@@ -814,7 +814,7 @@ async def test_get_bill_periods_success() -> None:
     api = ElectricIrelandAPI("user@test.com", "pass123", "100000001")
     meter_ids = {"partner": "P1", "contract": "C1", "premise": "PR1"}
     url = f"{BASE_URL}/MeterInsight/P1/C1/PR1/bill-period"
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(url, payload=_BILL_PERIOD_RESPONSE, content_type="application/json")
         async with aiohttp.ClientSession() as session:
             result = await api.get_bill_periods(session, meter_ids)
@@ -828,7 +828,7 @@ async def test_get_bill_periods_204() -> None:
     api = ElectricIrelandAPI("user@test.com", "pass123", "100000001")
     meter_ids = {"partner": "P1", "contract": "C1", "premise": "PR1"}
     url = f"{BASE_URL}/MeterInsight/P1/C1/PR1/bill-period"
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(url, status=204)
         async with aiohttp.ClientSession() as session:
             result = await api.get_bill_periods(session, meter_ids)
@@ -840,7 +840,7 @@ async def test_get_bill_periods_is_success_false() -> None:
     api = ElectricIrelandAPI("user@test.com", "pass123", "100000001")
     meter_ids = {"partner": "P1", "contract": "C1", "premise": "PR1"}
     url = f"{BASE_URL}/MeterInsight/P1/C1/PR1/bill-period"
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(url, payload={"isSuccess": False, "message": "fail", "data": []}, content_type="application/json")
         async with aiohttp.ClientSession() as session:
             result = await api.get_bill_periods(session, meter_ids)
@@ -852,7 +852,7 @@ async def test_get_bill_periods_session_expired() -> None:
     api = ElectricIrelandAPI("user@test.com", "pass123", "100000001")
     meter_ids = {"partner": "P1", "contract": "C1", "premise": "PR1"}
     url = f"{BASE_URL}/MeterInsight/P1/C1/PR1/bill-period"
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(
             url,
             status=200,
@@ -869,7 +869,7 @@ async def test_get_bill_periods_client_error() -> None:
     api = ElectricIrelandAPI("user@test.com", "pass123", "100000001")
     meter_ids = {"partner": "P1", "contract": "C1", "premise": "PR1"}
     url = f"{BASE_URL}/MeterInsight/P1/C1/PR1/bill-period"
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(url, exception=aiohttp.ClientError("network error"))
         async with aiohttp.ClientSession() as session:
             with pytest.raises(CannotConnect):
@@ -886,7 +886,7 @@ async def test_get_hourly_usage_delegates_to_get_data() -> None:
     api = ElectricIrelandAPI("user@test.com", "pass123", "100000001")
     meter_ids = {"partner": "P1", "contract": "C1", "premise": "PR1"}
     url = f"{BASE_URL}/MeterInsight/P1/C1/PR1/hourly-usage?date=2026-03-23"
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(url, payload=SAMPLE_RESPONSE, content_type="application/json")
         async with aiohttp.ClientSession() as session:
             result = await api.get_hourly_usage(session, meter_ids, date(2026, 3, 23))
@@ -930,7 +930,7 @@ _INSIGHTS_MISSING_ATTRS_HTML = """<html><body>
 async def test_login_page_missing_form_action() -> None:
     """Dashboard HTML has account div but no <form action="/Accounts/OnEvent">."""
     api = ElectricIrelandAPI("user@test.com", "pass123", "100000001")
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(f"{BASE_URL}/", status=200, body=_LOGIN_PAGE_HTML, headers={"Set-Cookie": "rvt=mock_rvt_token; Path=/"})
         m.post(f"{BASE_URL}/", status=200, body=_DASHBOARD_NO_FORM_HTML)
         async with aiohttp.ClientSession() as session:
@@ -941,7 +941,7 @@ async def test_login_page_missing_form_action() -> None:
 async def test_login_page_form_inputs_with_none_name() -> None:
     """Form inputs without name attribute are silently skipped."""
     api = ElectricIrelandAPI("user@test.com", "pass123", "100000001")
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(f"{BASE_URL}/", status=200, body=_LOGIN_PAGE_HTML, headers={"Set-Cookie": "rvt=mock_rvt_token; Path=/"})
         m.post(f"{BASE_URL}/", status=200, body=_DASHBOARD_FORM_NAMELESS_INPUTS_HTML)
         m.post(f"{BASE_URL}/Accounts/OnEvent", status=200, body=_INSIGHTS_HTML)
@@ -955,7 +955,7 @@ async def test_login_page_form_inputs_with_none_name() -> None:
 async def test_insights_page_missing_model_data_div() -> None:
     """Insights page with no <div id="modelData"> raises InvalidAuth."""
     api = ElectricIrelandAPI("user@test.com", "pass123", "100000001")
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(f"{BASE_URL}/", status=200, body=_LOGIN_PAGE_HTML, headers={"Set-Cookie": "rvt=mock_rvt_token; Path=/"})
         m.post(f"{BASE_URL}/", status=200, body=_DASHBOARD_HTML)
         m.post(
@@ -971,7 +971,7 @@ async def test_insights_page_missing_model_data_div() -> None:
 async def test_insights_page_model_data_missing_attributes() -> None:
     """modelData div exists but lacks data-contract and data-premise."""
     api = ElectricIrelandAPI("user@test.com", "pass123", "100000001")
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(f"{BASE_URL}/", status=200, body=_LOGIN_PAGE_HTML, headers={"Set-Cookie": "rvt=mock_rvt_token; Path=/"})
         m.post(f"{BASE_URL}/", status=200, body=_DASHBOARD_HTML)
         m.post(f"{BASE_URL}/Accounts/OnEvent", status=200, body=_INSIGHTS_MISSING_ATTRS_HTML)
@@ -990,7 +990,7 @@ async def test_get_data_timeout_error() -> None:
     meter_ids = {"partner": "P1", "contract": "C1", "premise": "PR1"}
     target_date = datetime(2026, 3, 23, tzinfo=UTC)
     url = f"{BASE_URL}/MeterInsight/P1/C1/PR1/hourly-usage?date=2026-03-23"
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(url, exception=TimeoutError())
         async with aiohttp.ClientSession() as session:
             client = MeterInsightClient(session, meter_ids)
@@ -1003,7 +1003,7 @@ async def test_get_data_empty_data_array() -> None:
     meter_ids = {"partner": "P1", "contract": "C1", "premise": "PR1"}
     target_date = datetime(2026, 3, 23, tzinfo=UTC)
     url = f"{BASE_URL}/MeterInsight/P1/C1/PR1/hourly-usage?date=2026-03-23"
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(url, payload={"isSuccess": True, "data": []}, content_type="application/json")
         async with aiohttp.ClientSession() as session:
             client = MeterInsightClient(session, meter_ids)
@@ -1028,7 +1028,7 @@ async def test_get_data_datapoint_with_all_null_tariffs() -> None:
             }
         ],
     }
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(url, payload=payload, content_type="application/json")
         async with aiohttp.ClientSession() as session:
             client = MeterInsightClient(session, meter_ids)
@@ -1074,7 +1074,7 @@ async def test_get_data_mixed_valid_and_invalid_datapoints() -> None:
             },
         ],
     }
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(url, payload=payload, content_type="application/json")
         async with aiohttp.ClientSession() as session:
             client = MeterInsightClient(session, meter_ids)
@@ -1124,7 +1124,7 @@ _DASHBOARD_GAS_AND_ELEC_HTML = """<html><body>
 async def test_discover_accounts_no_electricity_accounts() -> None:
     """Dashboard has multiple account divs but none are electricity."""
     api = ElectricIrelandAPI("user@test.com", "pass123")
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(f"{BASE_URL}/", status=200, body=_LOGIN_PAGE_HTML, headers={"Set-Cookie": "rvt=mock_rvt_token; Path=/"})
         m.post(f"{BASE_URL}/", status=200, body=_DASHBOARD_MULTIPLE_NON_ELEC_HTML)
         async with aiohttp.ClientSession() as session:
@@ -1135,7 +1135,7 @@ async def test_discover_accounts_no_electricity_accounts() -> None:
 async def test_discover_accounts_gas_account_filtered() -> None:
     """Dashboard with both gas and electricity accounts returns only electricity."""
     api = ElectricIrelandAPI("user@test.com", "pass123")
-    with aioresponses_mock() as m:
+    with aioresponses() as m:
         m.get(f"{BASE_URL}/", status=200, body=_LOGIN_PAGE_HTML, headers={"Set-Cookie": "rvt=mock_rvt_token; Path=/"})
         m.post(f"{BASE_URL}/", status=200, body=_DASHBOARD_GAS_AND_ELEC_HTML)
         async with aiohttp.ClientSession() as session:

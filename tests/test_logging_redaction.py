@@ -201,7 +201,7 @@ async def test_api_logs_redact_meter_ids(caplog) -> None:
     caplog.set_level(logging.DEBUG, logger="custom_components.electric_ireland_insights.api")
 
     import aiohttp
-    from aioresponses import aioresponses as aioresponses_mock
+    from aioresponses import aioresponses
 
     from custom_components.electric_ireland_insights.api import ElectricIrelandAPI
 
@@ -223,7 +223,7 @@ async def test_api_logs_redact_meter_ids(caplog) -> None:
     )
 
     async with aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar()) as session:
-        with aioresponses_mock() as m:
+        with aioresponses() as m:
             m.get("https://youraccountonline.electricireland.ie/", status=200, body=login_html)
             m.post("https://youraccountonline.electricireland.ie/", status=200, body=dashboard_html)
             m.post(

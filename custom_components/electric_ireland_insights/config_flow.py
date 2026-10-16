@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import aiohttp
-import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.core import HomeAssistant
@@ -25,6 +24,16 @@ from .const import (
 )
 from .exceptions import AccountNotFound, CannotConnect, InvalidAuth
 from .types import MeterIds
+
+if TYPE_CHECKING:
+    import probatio as vol
+else:
+    try:
+        import probatio as vol
+    except ModuleNotFoundError as err:
+        if err.name != "probatio":
+            raise
+        import voluptuous as vol
 
 _LOGGER = logging.getLogger(__name__)
 
