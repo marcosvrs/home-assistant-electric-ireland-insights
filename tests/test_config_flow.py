@@ -957,7 +957,7 @@ async def test_options_flow_updates_discount(recorder_mock, hass, enable_custom_
 
 
 @pytest.mark.parametrize(
-    ("legacy_discount", "expected_discount"),
+    "discounts",
     [(20, 20), (None, 0)],
 )
 async def test_options_flow_uses_legacy_data_discount(
@@ -965,10 +965,10 @@ async def test_options_flow_uses_legacy_data_discount(
     hass,
     enable_custom_integrations,
     mock_setup_entry,
-    legacy_discount,
-    expected_discount,
+    discounts,
 ):
     """Options flow uses a data discount or the default when options are empty."""
+    legacy_discount, expected_discount = discounts
     from pytest_homeassistant_custom_component.common import MockConfigEntry
 
     entry = MockConfigEntry(
